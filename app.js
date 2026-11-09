@@ -36,11 +36,11 @@ const STATUS = [
 ];
 const ALL_COLS = () => STATUS.map(x => x.id);
 const DEFAULT_COLS = {
-  edit: ['editing', 'review_op', 'review_ip', 'revising', 'done'],
+  edit: ['doing', 'editing', 'review_op', 'review_ip', 'revising', 'done'],
   shoot: ['approved', 'doing', 'editing', 'review_op', 'review_ip', 'revising', 'done'],
 };
 const platCols = pl => (pl && Array.isArray(pl.columns) && pl.columns.length) ? STATUS.map(x => x.id).filter(id => pl.columns.includes(id)) : ALL_COLS();
-const DEFAULT_NAMES = { shoot: { doing: '拍攝中' } };
+const DEFAULT_NAMES = { shoot: { doing: '拍攝中' }, edit: { doing: '初剪中' } };
 const stName = (id, platId) => { const pl = platId && Store.data && Store.data.settings.platforms.find(x => x.id === platId); return (pl && pl.colNames && pl.colNames[id]) || statusName(id); };
 const statusPill = (id, platId) => { const st = STATUS.find(x => x.id === id) || { name: id, bg: '#ddd', fg: '#333' }; return `<span class="spill" style="--sb:${st.bg};--sf:${st.fg}">${esc(stName(id, platId))}</span>`; };
 const ACTIVE = ['approved', 'doing', 'editing', 'review_op', 'review_ip', 'revising'];
@@ -70,7 +70,7 @@ function withCols(list) {
 }
 
 function emptyData() {
-  return { version: 1, meta: { addedEdit: true, addedShoot: true, addedCols: true, addedNames: true }, settings: { platforms: defaultPlatforms(), ips: ['自己'] }, ipProfiles: {}, projects: {}, tasks: {} };
+  return { version: 1, meta: { addedEdit: true, addedShoot: true, addedCols: true, addedNames: true, editDoing: true }, settings: { platforms: defaultPlatforms(), ips: ['自己'] }, ipProfiles: {}, projects: {}, tasks: {} };
 }
 
 /* IP 需求的預設欄位（新增 IP 時自動帶入，之後每個 IP 可以各自增減） */
@@ -111,6 +111,14 @@ const Store = {
     }
     if (!this.data.meta.addedNames) { this.data.settings.platforms.forEach(p => { p.colNames = Object.assign({}, DEFAULT_NAMES[p.id] || {}, p.colNames || {}); }); this.data.meta.addedNames = true; this.save(); }
     if (!this.data.meta.addedCols) { withCols(this.data.settings.platforms); this.data.meta.addedCols = true; this.save(); }
+    if (!this.data.meta.editDoing) {
+      const e = this.data.settings.platforms.find(p => p.id === 'edit');
+      if (e) {
+        e.colNames = e.colNames || {}; if (!e.colNames.doing) e.colNames.doing = '初剪中';
+        if (Array.isArray(e.columns) && !e.columns.includes('doing')) e.columns.push('doing');
+      }
+      this.data.meta.editDoing = true; this.save();
+    }
     if (!Array.isArray(this.data.settings.ips)) { this.data.settings.ips = ['自己']; this.save(); }
     this.data.ipProfiles = this.data.ipProfiles || {};
     // 移除舊版留下的範例資料
@@ -862,7 +870,7 @@ function viewPrefs() {
         <input type="text" value="${esc(p.name)}" data-change="platName" data-id="${esc(p.id)}" aria-label="平台名稱">
         <button class="btn small danger" data-act="delPlat" data-id="${esc(p.id)}">刪除</button>
       </div>
-      <div class="col-pick"><span class="hint">看板欄位：</span>${STATUS.map(st => `<button class="chip small" data-act="togCol" data-id="${esc(p.id)}" data-val="${st.id}" aria-pressed="${platCols(p).includes(st.id)}">${esc(stName(st.id, p.id))}</button>`).join('')}</div>
+      <div class="col-pick"><span class="hint">看板欄位：</span><button class="btn small ghost" data-act="renameCols" data-id="${esc(p.id)}">✏️ 改欄位名稱</button>${STATUS.map(st => `<button class="chip small" data-act="togCol" data-id="${esc(p.id)}" data-val="${st.id}" aria-pressed="${platCols(p).includes(st.id)}">${esc(stName(st.id, p.id))}</button>`).join('')}</div>
       <div class="chips">${p.categories.map((c, i) => `<span class="cat-chip">${esc(c)}<button data-act="delCat" data-id="${esc(p.id)}" data-val="${i}" aria-label="刪除分類 ${esc(c)}">✕</button></span>`).join('')}
         <input type="text" class="cat-add" placeholder="＋ 分類" data-enter="addCat" data-id="${esc(p.id)}" aria-label="新增分類"></div>
     </div>`).join('');
@@ -1157,6 +1165,18 @@ const ACTIONS = {
     const used = allProjects().filter(p => p.ip === n).length;
     if (used && !arm(el, '✓')) { toast(`有 ${used} 個專案標記「${n}」，再按一次確定刪除（專案的標記會保留）`); return; }
     DB().settings.ips.splice(Number(el.dataset.val), 1); Store.saveSettings();
+  },
+  renameCols: el => {
+    const pl = platform(el.dataset.id);
+    openModal(`<div class="modal-h"><h2>${esc(pl.name)}｜欄位名稱</h2><button class="icon-btn" data-act="closeModal" aria-label="關閉">✕</button></div>
+      <div class="modal-b"><p class="sub" style="margin:0">只會改「${esc(pl.name)}」的顯示名稱，留空就用預設名稱。</p>
+        ${STATUS.map(st => `<label class="f"><span>${statusPill(st.id)}</span><input type="text" data-col="${st.id}" value="${esc((pl.colNames || {})[st.id] || '')}" placeholder="${esc(st.name)}"></label>`).join('')}</div>
+      <div class="modal-f"><div class="r"><button class="btn" data-act="closeModal">取消</button><button class="btn primary" id="rcSave">儲存</button></div></div>`);
+    $('#rcSave').onclick = () => {
+      const names = {};
+      $$('[data-col]').forEach(i => { const v = i.value.trim(); if (v) names[i.dataset.col] = v; });
+      pl.colNames = names; closeModal(); Store.saveSettings(); toast(`已更新「${pl.name}」的欄位名稱`);
+    };
   },
   togCol: el => {
     const pl = platform(el.dataset.id); let cols = platCols(pl).slice(); const id = el.dataset.val;
