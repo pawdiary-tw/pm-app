@@ -262,3 +262,9 @@ details.sec[open] > summary .sec-h::after{transform:rotate(90deg)}
 
 .col-pick{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .chip.small{font-size:.74rem;padding:2px 9px}
+
+/* ---------- 同步狀態 ---------- */
+.sync-badge{margin-left:auto;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;font-size:.78rem;color:var(--muted);white-space:nowrap}
+.sync-badge[data-state="ok"]{color:var(--ok);border-color:var(--ok-soft);background:var(--ok-soft)}
+.sync-badge[data-state="error"]{color:var(--late);border-color:var(--late-soft);background:var(--late-soft)}
+.sync-badge[data-state="offline"]{color:var(--warn);background:var(--warn-soft);border-color:var(--warn-soft)}

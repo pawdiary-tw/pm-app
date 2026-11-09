@@ -92,6 +92,9 @@ const Store = {
   data: null,
   load() {
     try { const raw = localStorage.getItem(DATA_KEY); if (raw) this.data = JSON.parse(raw); } catch (e) { this.data = null; }
+    this.migrate();
+  },
+  migrate() {
     if (!this.data || !this.data.settings) { this.data = emptyData(); this.save(); }
     this.data.projects = this.data.projects || {};
     this.data.tasks = this.data.tasks || {};
@@ -117,17 +120,160 @@ const Store = {
       delete this.data.meta.sample; this.save();
     }
   },
-  save() { try { localStorage.setItem(DATA_KEY, JSON.stringify(this.data)); } catch (e) { toast('無法儲存：瀏覽器不允許存資料（可能是無痕模式）'); } },
+  persistLocal() { try { localStorage.setItem(DATA_KEY, JSON.stringify(this.data)); } catch (e) { toast('無法儲存：瀏覽器不允許存資料（可能是無痕模式）'); } },
+  save() { this.persistLocal(); scheduleSync(); },
   upsert(col, obj) { obj.updatedAt = Date.now(); this.data[col][obj.id] = obj; this.save(); render(); },
   remove(col, id) { delete this.data[col][id]; this.save(); render(); },
   saveSettings() { this.save(); render(); },
-  replace(data) { this.data = data; this.save(); render(); },
+  replace(data) { this.data = data; this.migrate(); this.save(); render(); },
 };
 const DB = () => Store.data;
 
 let UI = { boardPlat: 'all', boardCat: 'all', boardIp: 'all', calMonth: null, calSel: null, repTab: 'week', repWeek: null, repMonth: null };
 try { Object.assign(UI, JSON.parse(localStorage.getItem(UI_KEY) || '{}')); } catch (e) { /* 忽略 */ }
 const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ boardPlat: UI.boardPlat, boardCat: UI.boardCat, boardIp: UI.boardIp, ipSel: UI.ipSel })); } catch (e) { /* 忽略 */ } };
+
+/* ================= 雲端同步（Firebase） =================
+   資料放在 users/{uid}/ 底下：tasks/{id}、projects/{id}、meta/state（設定、IP 需求）。
+   每次存檔時比對「上次同步的內容」，只上傳有變動的文件。 */
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyC7FTosEOLykTePK-zGDKncK7AuK3bfJ4o',
+  authDomain: 'my-pm-e9b70.firebaseapp.com',
+  projectId: 'my-pm-e9b70',
+  storageBucket: 'my-pm-e9b70.firebasestorage.app',
+  messagingSenderId: '931392704452',
+  appId: '1:931392704452:web:881d8bd62a062ceb8e1e91',
+};
+const Sync = { available: false, user: null, db: null, auth: null, ready: false, synced: {}, timer: null, status: 'local', unsubs: [], pendingRender: false };
+const SYNC_LABEL = { local: '☁️ 未登入', syncing: '☁️ 同步中…', ok: '☁️ 已同步', offline: '☁️ 離線中', error: '⚠️ 同步失敗' };
+const SYNC_TEXT = { local: '尚未登入，資料只存在這台裝置', syncing: '正在同步…', ok: '已同步到雲端', offline: '目前離線，恢復連線後會自動同步', error: '同步失敗，請檢查網路後重新整理' };
+function setSyncStatus(st) {
+  Sync.status = st;
+  const el = $('#syncBadge');
+  if (el) { el.hidden = !Sync.available; el.dataset.state = st; el.textContent = SYNC_LABEL[st]; el.title = SYNC_TEXT[st]; }
+}
+const userRef = () => Sync.db.collection('users').doc(Sync.user.uid);
+const plain = o => JSON.parse(JSON.stringify(o));
+function currentDocs() {
+  const d = Store.data, m = {};
+  Object.values(d.tasks).forEach(t => { m['tasks/' + t.id] = t; });
+  Object.values(d.projects).forEach(p => { m['projects/' + p.id] = p; });
+  m['meta/state'] = { version: d.version || 1, settings: d.settings, ipProfiles: d.ipProfiles || {}, meta: d.meta || {} };
+  return m;
+}
+function scheduleSync() { if (!Sync.ready) return; clearTimeout(Sync.timer); Sync.timer = setTimeout(pushDiff, 400); }
+async function pushDiff() {
+  clearTimeout(Sync.timer); Sync.timer = null;
+  if (!Sync.ready) return;
+  const cur = currentDocs(), ops = [];
+  Object.entries(cur).forEach(([k, v]) => { const j = JSON.stringify(v); if (Sync.synced[k] !== j) ops.push({ k, v, j }); });
+  Object.keys(Sync.synced).forEach(k => { if (!(k in cur)) ops.push({ k, del: true }); });
+  if (!ops.length) return;
+  setSyncStatus(navigator.onLine === false ? 'offline' : 'syncing');
+  ops.forEach(o => { if (o.del) delete Sync.synced[o.k]; else Sync.synced[o.k] = o.j; });
+  try {
+    for (let i = 0; i < ops.length; i += 400) {
+      const batch = Sync.db.batch();
+      ops.slice(i, i + 400).forEach(o => {
+        const [col, id] = o.k.split('/');
+        const ref = userRef().collection(col).doc(id);
+        if (o.del) batch.delete(ref); else batch.set(ref, plain(o.v));
+      });
+      await batch.commit();
+    }
+    if (!Sync.timer) setSyncStatus('ok');
+  } catch (e) {
+    console.error(e);
+    ops.forEach(o => { delete Sync.synced[o.k]; });
+    setSyncStatus('error'); toast('同步失敗：' + (e.code || e.message));
+  }
+}
+function applyCollection(col, snap) {
+  const map = {};
+  snap.forEach(doc => { map[doc.id] = doc.data(); });
+  Store.data[col] = map;
+  Object.keys(Sync.synced).forEach(k => { if (k.indexOf(col + '/') === 0) delete Sync.synced[k]; });
+  Object.entries(map).forEach(([id, v]) => { Sync.synced[col + '/' + id] = JSON.stringify(v); });
+}
+function applyMeta(doc) {
+  const v = doc.data();
+  Store.data.version = v.version || 1;
+  Store.data.settings = v.settings || { platforms: defaultPlatforms(), ips: ['自己'] };
+  Store.data.ipProfiles = v.ipProfiles || {};
+  Store.data.meta = v.meta || {};
+  Sync.synced['meta/state'] = JSON.stringify(currentDocs()['meta/state']);
+}
+/* 有人正在打字或在回報頁修改文字時，先不要重畫畫面，免得內容被洗掉 */
+function renderSafe() {
+  const a = document.activeElement;
+  const typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.closest('#view') && !(a.id === 'quickInput' && !a.value);
+  if (typing || lastRoute === 'report' || $('#modalBg')) { Sync.pendingRender = true; return; }
+  Sync.pendingRender = false; render();
+}
+document.addEventListener('focusout', () => setTimeout(() => { if (Sync.pendingRender && lastRoute !== 'report' && !$('#modalBg')) renderSafe(); }, 50));
+async function startSync(user) {
+  Sync.user = user; setSyncStatus('syncing');
+  try {
+    const ref = userRef();
+    const metaDoc = await ref.collection('meta').doc('state').get();
+    Sync.synced = {};
+    if (!metaDoc.exists) {
+      // 第一次登入：把這台裝置上的資料上傳
+      Sync.ready = true; await pushDiff();
+      toast('已開啟同步，這台裝置的資料已上傳到雲端');
+    } else {
+      // 雲端已有資料：以雲端為準
+      const [ts, ps] = await Promise.all([ref.collection('tasks').get(), ref.collection('projects').get()]);
+      applyMeta(metaDoc); applyCollection('tasks', ts); applyCollection('projects', ps);
+      Store.migrate(); Store.persistLocal();
+      Sync.ready = true; render(); pushDiff();
+    }
+    listenRemote();
+    setSyncStatus('ok');
+  } catch (e) {
+    console.error(e); setSyncStatus('error'); toast('無法連到雲端：' + (e.code || e.message));
+  }
+}
+function listenRemote() {
+  const ref = userRef();
+  const handle = fn => snap => {
+    if (snap.metadata.hasPendingWrites) return; // 自己剛寫入的，不用處理
+    if (Sync.timer) { pushDiff(); return; } // 本機還有沒送出的修改，先送出，下一次再接收
+    fn(snap); Store.migrate(); Store.persistLocal(); renderSafe();
+  };
+  const onErr = e => { console.error(e); setSyncStatus('error'); };
+  Sync.unsubs.push(ref.collection('tasks').onSnapshot(handle(s => applyCollection('tasks', s)), onErr));
+  Sync.unsubs.push(ref.collection('projects').onSnapshot(handle(s => applyCollection('projects', s)), onErr));
+  Sync.unsubs.push(ref.collection('meta').doc('state').onSnapshot(handle(d => { if (d.exists) applyMeta(d); }), onErr));
+}
+function stopSync() { Sync.unsubs.forEach(u => u()); Sync.unsubs = []; Sync.ready = false; Sync.user = null; Sync.synced = {}; clearTimeout(Sync.timer); Sync.timer = null; }
+function initSync() {
+  if (!window.firebase || !FIREBASE_CONFIG.apiKey) { setSyncStatus('local'); return; }
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    Sync.auth = firebase.auth(); Sync.db = firebase.firestore();
+    try { Sync.db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) { /* 不支援離線快取也沒關係 */ }
+    Sync.available = true; setSyncStatus('local');
+    Sync.auth.getRedirectResult().catch(e => { if (e && e.code) toast('登入失敗：' + e.code); });
+    Sync.auth.onAuthStateChanged(u => {
+      if (u) startSync(u);
+      else { stopSync(); setSyncStatus('local'); render(); }
+    });
+    window.addEventListener('online', () => { if (Sync.ready) { setSyncStatus('syncing'); pushDiff().then(() => setSyncStatus('ok')); } });
+    window.addEventListener('offline', () => { if (Sync.ready) setSyncStatus('offline'); });
+  } catch (e) { console.error(e); Sync.available = false; }
+}
+async function signIn() {
+  if (!Sync.available) { toast('這個網址不支援同步，請用正式網址開啟'); return; }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try { await Sync.auth.signInWithPopup(provider); }
+  catch (e) {
+    if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/web-storage-unsupported'].includes(e.code)) return Sync.auth.signInWithRedirect(provider);
+    if (e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request') toast('登入失敗：' + (e.code || e.message));
+  }
+}
+async function signOutSync() { try { await pushDiff(); } catch (e) { /* 忽略 */ } await Sync.auth.signOut(); toast('已登出，之後的修改只會存在這台裝置'); }
 
 /* ================= 資料查詢 ================= */
 const allTasks = () => Object.values(DB().tasks);
@@ -215,6 +361,7 @@ function viewToday() {
 
   const lateN = lateT.length + lateP.length;
   const banners = [];
+  if (Sync.available && !Sync.user) banners.push(`<div class="banner info"><span>☁️ 登入 Google 帳號，手機和電腦就會同步</span><button class="btn small primary" data-act="signIn">用 Google 登入</button></div>`);
   if (lateN) banners.push(`<div class="banner late"><span>⚠️ 你有 ${lateN} 項逾期</span></div>`);
   if (parseD(T).getDay() === 0) banners.push(`<div class="banner info"><span>📋 今天週日，要產生本週週報嗎？</span><button class="btn small primary" data-act="goWeekly">產生週報</button></div>`);
 
@@ -726,14 +873,18 @@ function viewPrefs() {
       <div style="display:flex;gap:8px"><input type="text" id="newPlat" placeholder="新增平台，例如 YouTube"><button class="btn" data-act="addPlat">新增</button></div>
     </section>
     <section class="panel"><h2>IP 名單</h2><p>IP 的新增、改名和需求規格，請到上方的「IP」頁管理。</p><div><a class="btn" href="#ips">前往 IP 頁</a></div></section>
-    <section class="panel"><h2>同步與通知</h2>
-      <p>目前資料只存在這台裝置的瀏覽器。下一步設定 Firebase 後，手機和電腦就會同步，也能開啟推播通知。</p>
-      <label class="toggle"><input type="checkbox" disabled> 推播通知（設定同步後開啟）</label>
+    <section class="panel"><h2>同步</h2>
+      ${!Sync.available ? '<p>這個網址不支援同步（預覽頁）。請到正式網址 pawdiary-tw.github.io/pm-app 使用。</p>'
+        : Sync.user ? `<p>已登入：<b>${esc(Sync.user.email || Sync.user.displayName || '')}</b>。${esc(SYNC_TEXT[Sync.status])}。</p><div><button class="btn" data-act="signOut">登出</button></div>`
+        : '<p>尚未登入，資料只存在這台裝置。登入後，手機和電腦會自動同步。</p><div><button class="btn primary" data-act="signIn">用 Google 登入</button></div>'}
     </section>
     <section class="panel"><h2>備份</h2>
       <p>建議每個月備份一次。備份檔可以用「匯入」還原。</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="exportFile">下載備份檔</button><button class="btn" data-act="exportCopy">複製備份內容</button>
-        <label class="btn" style="position:relative">匯入備份<input type="file" id="importFile" accept=".json,application/json" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label></div>
+        <label class="btn" style="position:relative">匯入備份檔<input type="file" id="importFile" accept=".json,application/json" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label></div>
+      <details><summary class="hint" style="cursor:pointer">用貼上的方式匯入（從預覽頁搬資料時用）</summary>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px"><textarea id="importText" rows="4" placeholder="把「複製備份內容」得到的文字貼在這裡"></textarea>
+        <div><button class="btn" data-act="importPaste">匯入貼上的內容</button></div><p>注意：匯入會取代目前所有資料。</p></div></details>
     </section>
     <section class="panel"><h2>資料</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1020,6 +1171,15 @@ const ACTIONS = {
     toast('已下載備份檔（如果沒有反應，請改用「複製備份內容」）');
   },
   exportCopy: () => copyText(JSON.stringify(DB())),
+  importPaste: el => {
+    let d; try { d = JSON.parse($('#importText').value); } catch (e) { toast('內容格式不對，請重新複製一次'); return; }
+    if (!d || !d.settings || !d.tasks || !d.projects) { toast('這不是正確的備份內容'); return; }
+    if (!arm(el, '會取代目前資料，確定？')) return;
+    Store.replace(d); toast(`已匯入：${Object.keys(d.projects).length} 個專案、${Object.keys(d.tasks).length} 個任務`);
+  },
+  signIn: () => signIn(),
+  goPrefsSync: () => { location.hash = 'prefs'; },
+  signOut: el => { if (!arm(el, '確定登出？')) return; signOutSync(); },
   wipeAll: el => {
     if (!arm(el, '真的全部清空？')) return;
     Store.replace(emptyData());
@@ -1114,4 +1274,5 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && to
 
 Store.load();
 render();
+initSync();
 })();
