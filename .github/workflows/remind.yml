@@ -1,0 +1,51 @@
+name: 推播提醒
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 'morning＝今日摘要，weekly＝週報提醒'
+        required: true
+        default: morning
+        type: choice
+        options: [morning, weekly]
+      force:
+        description: '今天已經發過也再發一次（測試用）'
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # GitHub 的時間是 UTC，台灣時間要 +8 小時。GitHub 排程常會晚幾分鐘，所以排早一點。
+    - cron: '17 0 * * *'   # 台灣 08:17 今日摘要
+    - cron: '47 0 * * *'   # 台灣 08:47 補發（前一次已送出就會略過）
+    - cron: '17 11 * * 0'  # 台灣週日 19:17 週報提醒
+    - cron: '47 11 * * 0'  # 台灣週日 19:47 補發
+
+permissions:
+  contents: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 安裝 Firebase
+        run: npm install --no-save --prefix scripts firebase-admin@12
+      - name: 發送通知
+        run: node scripts/remind.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          KIND: ${{ github.event.inputs.kind || (endsWith(github.event.schedule, '* * 0') && 'weekly' || 'morning') }}
+          FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
+      - name: 保持排程啟用（公開專案 60 天沒更新，GitHub 會自動停用排程）
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( ($(date +%s) - last) / 86400 )) -ge 45 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "保持排程啟用"
+            git push
+          fi

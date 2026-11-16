@@ -264,7 +264,7 @@ function initSync() {
     Sync.available = true; setSyncStatus('local');
     Sync.auth.getRedirectResult().catch(e => { if (e && e.code) toast('登入失敗：' + e.code); });
     Sync.auth.onAuthStateChanged(u => {
-      if (u) startSync(u);
+      if (u) { startSync(u); listenForeground(); }
       else { stopSync(); setSyncStatus('local'); render(); }
     });
     window.addEventListener('online', () => { if (Sync.ready) { setSyncStatus('syncing'); pushDiff().then(() => setSyncStatus('ok')); } });
@@ -282,6 +282,58 @@ async function signIn() {
   }
 }
 async function signOutSync() { try { await pushDiff(); } catch (e) { /* 忽略 */ } await Sync.auth.signOut(); toast('已登出，之後的修改只會存在這台裝置'); }
+
+/* ================= 推播通知 ================= */
+const VAPID_KEY = '';
+const PUSH_KEY = 'pm.pushToken';
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* 忽略 */ } };
+function pushState() {
+  if (!Sync.available) return { ok: false, msg: '請用正式網址 pawdiary-tw.github.io/pm-app 開啟。' };
+  if (isIOS && !isStandalone()) return { ok: false, ios: true, msg: 'iPhone 要先把網頁「加入主畫面」，再從主畫面的圖示打開，才能開啟通知。' };
+  if (!('serviceWorker' in navigator) || !('Notification' in window) || !window.firebase || !firebase.messaging) return { ok: false, msg: '這個瀏覽器不支援推播通知。' };
+  if (!VAPID_KEY) return { ok: false, msg: '推播還在設定中，完成後就能開啟。' };
+  if (!Sync.user) return { ok: false, msg: '請先登入 Google 帳號。' };
+  const on = !!lsGet(PUSH_KEY) && Notification.permission === 'granted';
+  if (Notification.permission === 'denied') return { ok: false, msg: '通知權限被關掉了，請到系統設定 → 通知，允許這個網頁傳送通知。' };
+  return { ok: true, on };
+}
+const tokenDocId = t => t.slice(-60).replace(/[^A-Za-z0-9_-]/g, '_');
+async function enablePush() {
+  const st = pushState(); if (!st.ok) { toast(st.msg); return; }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('沒有取得通知權限'); render(); return; }
+    const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    await navigator.serviceWorker.ready;
+    const token = await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if (!token) throw new Error('沒有拿到裝置代碼');
+    const device = isIOS ? 'iPhone／iPad' : /Android/.test(navigator.userAgent) ? 'Android' : '電腦';
+    await userRef().collection('push').doc(tokenDocId(token)).set({ token, device, ua: navigator.userAgent.slice(0, 200), createdAt: Date.now() });
+    lsSet(PUSH_KEY, token);
+    toast('已開啟這台裝置的通知 🔔'); render();
+  } catch (e) { console.error(e); toast('開啟通知失敗：' + (e.code || e.message)); }
+}
+async function disablePush() {
+  const token = lsGet(PUSH_KEY);
+  try {
+    if (token && Sync.user) await userRef().collection('push').doc(tokenDocId(token)).delete();
+    if (window.firebase && firebase.messaging) await firebase.messaging().deleteToken().catch(() => {});
+  } catch (e) { console.error(e); }
+  lsSet(PUSH_KEY, null); toast('已關閉這台裝置的通知'); render();
+}
+async function testLocalNotice() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('firebase-messaging-sw.js') || await navigator.serviceWorker.ready;
+    await reg.showNotification('🔔 測試通知', { body: '看到這則就代表這台裝置可以顯示通知了', icon: 'icon-192.png' });
+  } catch (e) { toast('無法顯示通知：' + e.message); }
+}
+// 網頁開著的時候收到通知：用提示條顯示
+function listenForeground() {
+  try { firebase.messaging().onMessage(p => { const n = p.notification || {}; toast(`${n.title || '通知'}｜${(n.body || '').split('\n')[0]}`); }); } catch (e) { /* 不支援 */ }
+}
 
 /* ================= 資料查詢 ================= */
 const allTasks = () => Object.values(DB().tasks);
@@ -370,6 +422,8 @@ function viewToday() {
   const lateN = lateT.length + lateP.length;
   const banners = [];
   if (Sync.available && !Sync.user) banners.push(`<div class="banner info"><span>☁️ 登入 Google 帳號，手機和電腦就會同步</span><button class="btn small primary" data-act="signIn">用 Google 登入</button></div>`);
+  { const st = Sync.user ? pushState() : null;
+    if (st && !lsGet('pm.pushAskOff') && ((st.ok && !st.on) || st.ios)) banners.push(`<div class="banner info"><span>🔔 ${st.ios ? '把網頁加入主畫面後，就能每天早上收到今日任務通知' : '開啟通知，每天早上提醒今天要做的事和逾期項目'}</span><span style="display:flex;gap:6px">${st.ios ? '<button class="btn small primary" data-act="howInstall">怎麼加入主畫面</button>' : '<button class="btn small primary" data-act="pushOn">開啟通知</button>'}<button class="btn small ghost" data-act="pushAskOff">不用</button></span></div>`); }
   if (lateN) banners.push(`<div class="banner late"><span>⚠️ 你有 ${lateN} 項逾期</span></div>`);
   if (parseD(T).getDay() === 0) banners.push(`<div class="banner info"><span>📋 今天週日，要產生本週週報嗎？</span><button class="btn small primary" data-act="goWeekly">產生週報</button></div>`);
 
@@ -881,6 +935,14 @@ function viewPrefs() {
       <div style="display:flex;gap:8px"><input type="text" id="newPlat" placeholder="新增平台，例如 YouTube"><button class="btn" data-act="addPlat">新增</button></div>
     </section>
     <section class="panel"><h2>IP 名單</h2><p>IP 的新增、改名和需求規格，請到上方的「IP」頁管理。</p><div><a class="btn" href="#ips">前往 IP 頁</a></div></section>
+    <section class="panel"><h2>推播通知</h2>
+      ${(() => { const st = pushState();
+        const sched = '<p>會在這些時間通知你：<br>・每天約 8:15～8:50：今天到期、逾期，以及明天要提案／上傳的項目<br>・週日約 19:15～19:50：提醒產生週報</p>';
+        if (!st.ok) return `<p>${esc(st.msg)}</p>${st.ios ? '<div><button class="btn" data-act="howInstall">怎麼加入主畫面</button></div>' : ''}${sched}`;
+        return st.on ? `<p>✅ 這台裝置已開啟通知。</p>${sched}<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="pushTest">顯示測試通知</button><button class="btn danger" data-act="pushOff">關閉這台裝置的通知</button></div>`
+          : `<p>這台裝置還沒開啟通知。手機和電腦要各自開啟一次。</p>${sched}<div><button class="btn primary" data-act="pushOn">開啟這台裝置的通知</button></div>`;
+      })()}
+    </section>
     <section class="panel"><h2>同步</h2>
       ${!Sync.available ? '<p>這個網址不支援同步（預覽頁）。請到正式網址 pawdiary-tw.github.io/pm-app 使用。</p>'
         : Sync.user ? `<p>已登入：<b>${esc(Sync.user.email || Sync.user.displayName || '')}</b>。${esc(SYNC_TEXT[Sync.status])}。</p><div><button class="btn" data-act="signOut">登出</button></div>`
@@ -1198,6 +1260,19 @@ const ACTIONS = {
     Store.replace(d); toast(`已匯入：${Object.keys(d.projects).length} 個專案、${Object.keys(d.tasks).length} 個任務`);
   },
   signIn: () => signIn(),
+  pushOn: () => enablePush(),
+  pushOff: el => { if (!arm(el, '確定關閉？')) return; disablePush(); },
+  pushTest: () => testLocalNotice(),
+  pushAskOff: () => { lsSet('pm.pushAskOff', '1'); render(); },
+  howInstall: () => openModal(`<div class="modal-h"><h2>加入主畫面（iPhone）</h2><button class="icon-btn" data-act="closeModal" aria-label="關閉">✕</button></div>
+    <div class="modal-b"><ol style="margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:8px;line-height:1.7">
+      <li>用 <b>Safari</b> 打開 pawdiary-tw.github.io/pm-app</li>
+      <li>點下方的 <b>分享</b> 按鈕（方框加向上箭頭）</li>
+      <li>往下滑，點 <b>加入主畫面</b> → 右上角 <b>加入</b></li>
+      <li>回到手機桌面，點新的「專案管理」圖示打開</li>
+      <li>登入 Google 帳號 → 設定 → <b>開啟這台裝置的通知</b> → 允許</li></ol>
+      <p class="hint">iPhone 需要 iOS 16.4 以上。從主畫面打開的版本和 Safari 裡的是分開的，要在主畫面版本裡登入一次。</p></div>
+    <div class="modal-f"><div class="r"><button class="btn primary" data-act="closeModal">知道了</button></div></div>`),
   goPrefsSync: () => { location.hash = 'prefs'; },
   signOut: el => { if (!arm(el, '確定登出？')) return; signOutSync(); },
   wipeAll: el => {
