@@ -284,7 +284,7 @@ async function signIn() {
 async function signOutSync() { try { await pushDiff(); } catch (e) { /* 忽略 */ } await Sync.auth.signOut(); toast('已登出，之後的修改只會存在這台裝置'); }
 
 /* ================= 推播通知 ================= */
-const VAPID_KEY = '';
+const VAPID_KEY = 'BJKOQhB-9eqIRctOet0EgD8JsddWhQ62YQavLKn6dVgDRt0ZbwEy1nXNmHjMMi9rCQzh8tedm9NEYIri6WfdDts';
 const PUSH_KEY = 'pm.pushToken';
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
