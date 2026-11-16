@@ -8,7 +8,14 @@ const SITE = 'https://pawdiary-tw.github.io/pm-app/';
 const KIND = process.env.KIND === 'weekly' ? 'weekly' : 'morning';
 const FORCE = process.env.FORCE === '1';
 
-admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  console.error('❌ 找不到伺服器鑰匙：請到 GitHub 專案 Settings → Secrets and variables → Actions，新增名為 FIREBASE_SERVICE_ACCOUNT 的 secret（內容是 Firebase 服務帳戶的 .json 檔）。');
+  process.exit(1);
+}
+let serviceAccount;
+try { serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT); }
+catch (e) { console.error('❌ FIREBASE_SERVICE_ACCOUNT 的內容不是完整的 .json，請重新複製整個檔案內容（從第一個 { 到最後一個 }）。'); process.exit(1); }
+admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
 // ---- 日期（一律用台灣時間） ----
