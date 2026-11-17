@@ -90,6 +90,7 @@ for (const user of users) {
     return null;
   }));
   console.log(`${user.id}：成功 ${res.successCount}、失敗 ${res.failureCount}\n${msg.title}\n${msg.body}`);
-  if (res.successCount) { await stateRef.set({ [KIND]: T }, { merge: true }); sent += res.successCount; }
+  // 手動測試（FORCE）不算數，才不會擋掉當天正式的通知
+  if (res.successCount) { if (!FORCE) await stateRef.set({ [KIND]: T }, { merge: true }); sent += res.successCount; }
 }
 console.log(`完成，共送出 ${sent} 則（${KIND}，${T}）`);
