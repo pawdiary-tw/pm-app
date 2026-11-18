@@ -387,8 +387,12 @@ const projOf = t => t.projectId ? DB().projects[t.projectId] : null;
 const taskPlatId = t => { const p = projOf(t); return p ? p.platform : null; };
 
 /* 專案「現在要看哪個日期」判斷逾期 */
+const EDIT_STAGES = ['assign', 'editing', 'review_op', 'review_ip', 'revising'];
+const isMyEdit = p => ['自己', '我'].includes((p.editor || '').trim());
+const noDeadline = p => p.platform === opsId() && EDIT_STAGES.includes(p.status) && !isMyEdit(p);
 function projKey(p) {
   if (p.status === 'done' || p.status === 'proposed') return null;
+  if (noDeadline(p)) return null;
   if (p.status === 'prep' || p.status === 'rejected') return p.proposeDate ? { date: p.proposeDate, label: '提案日' } : null;
   if (p.status === 'booked' && p.shootDate) return { date: p.shootDate, label: '拍攝日' };
   if (p.dueDate) return { date: p.dueDate, label: '截止日' };
@@ -404,6 +408,7 @@ function dueBadge(date, T, prefix = '') {
 function projBadge(p, T) {
   if (p.status === 'done') return { cls: 'ok', text: '已完成' };
   if (p.status === 'proposed') return { cls: 'info', text: '等老闆回覆' };
+  if (noDeadline(p)) return { cls: 'idle', text: p.launchDate ? `預計上傳 ${md(p.launchDate)}` : stName(p.status, p.platform) };
   const k = projKey(p);
   if (!k) return { cls: 'idle', text: (p.status === 'prep' || p.status === 'rejected') ? '未填提案日' : '未填上傳日' };
   return dueBadge(k.date, T, k.label + ' ');
@@ -501,6 +506,44 @@ function viewToday() {
 }
 
 /* ================= 專案看板 ================= */
+/* 操盤進度：每個 IP、每一批目前在哪個階段 */
+function opsProgress(ipFilter) {
+  const pid = opsId(), pl = platform(pid);
+  const ps = allProjects().filter(p => p.platform === pid && (!ipFilter || ipFilter === 'all' || p.ip === ipFilter));
+  const groups = {};
+  ps.forEach(p => { const k = `${p.ip || '未指定 IP'}|${p.batch || '未分批'}`; (groups[k] = groups[k] || []).push(p); });
+  const order = platCols(pl);
+  return Object.keys(groups).sort().map(k => {
+    const [ip, batch] = k.split('|'), list = groups[k];
+    const counts = {};
+    list.forEach(p => { counts[p.status] = (counts[p.status] || 0) + 1; });
+    const stages = order.concat(Object.keys(counts).filter(id => !order.includes(id))).filter(id => counts[id]).map(id => ({ id, name: stName(id, pid), n: counts[id] }));
+    const done = counts.done || 0;
+    return { key: `${ip}|${batch}`, ip, batch, total: list.length, done, stages, allDone: done === list.length };
+  });
+}
+function opsProgressText(ipFilter) {
+  const rows = opsProgress(ipFilter).filter(r => !r.allDone);
+  if (!rows.length) return null;
+  return rows.map(r => `【${r.ip}】${r.batch}　完成 ${r.done}/${r.total}\n　${r.stages.filter(x => x.id !== 'done').map(x => `${x.name} ${x.n}`).join('、')}`).join('\n');
+}
+function opsProgressHTML() {
+  const rows = opsProgress(UI.boardIp);
+  if (!rows.length) return '';
+  const hideDone = UI.hideDoneBatches !== false;
+  const shown = hideDone ? rows.filter(r => !r.allDone) : rows;
+  const doneN = rows.filter(r => r.allDone).length;
+  const pid = opsId();
+  return `<section class="prog">
+    <div class="prog-h"><h2>📊 操盤進度</h2><span class="hint">${hideDone && doneN ? `另有 ${doneN} 批已全部完成` : ''}</span><button class="btn small" data-act="progCopy" style="margin-left:auto">複製進度</button></div>
+    ${shown.length ? shown.map(r => `<div class="prog-row">
+      <button class="prog-name" data-act="boardBatch" data-val="${esc(r.key)}" title="只看這一批">${esc(r.ip)}・${esc(r.batch)}</button>
+      <div class="bar"><i style="width:${Math.round(r.done / r.total * 100)}%"></i></div><span class="prog-n">${r.done}/${r.total}</span>
+      <div class="prog-stages">${r.stages.map(x => `<span class="prog-st">${statusPill(x.id, pid)}<b>${x.n}</b></span>`).join('')}</div>
+    </div>`).join('') : '<div class="empty" style="padding:6px 0;text-align:left">目前的批次都完成了 🎉</div>'}
+  </section>`;
+}
+
 function viewBoard() {
   const T = today();
   const plats = DB().settings.platforms;
@@ -550,6 +593,7 @@ function viewBoard() {
   return `<div class="page wide">
     <header class="page-h"><div><h1>專案看板</h1><p class="sub">共 ${list.length} 個專案</p></div><button class="btn primary" data-act="newProject">＋ 新增專案</button></header>
     <div class="filters"><div class="chips">${platChips}</div>${catChips}${ipChips}${batchChips}</div>
+    ${cur && cur.id === opsId() ? opsProgressHTML() : ''}
     <div class="board-wrap" id="boardWrap"><div class="board" id="board">${cols}</div></div>
     <p class="hint">電腦：直接拖拉卡片換欄位。手機：按住卡片約半秒，感覺到震動後再拖。也可以點開專案改狀態。</p>
   </div>`;
@@ -822,6 +866,8 @@ function genWeekly(ws) {
   L.push(...(next.length ? next.map(x => x.s) : ['（下週尚無排定項目，可在這裡補充）']), '');
 
   const doing = projects.filter(p => ACTIVE.includes(p.status)).length;
+  const opsTxt = opsProgressText('all');
+  if (opsTxt) L.push('🎬 操盤進度', opsTxt, '');
   L.push(`📊 本週數據：完成 ${doneP.length + doneT.length}｜進行中專案 ${doing}｜退件 ${revN}｜修改 ${editN}｜逾期 ${lateItems.length}`);
   return L.join('\n');
 }
@@ -1343,8 +1389,8 @@ function openProject(id, preset = {}) {
         <label class="f"><span>🎥 拍攝日（選填）</span><input type="date" id="pShoot" value="${p.shootDate || ''}"></label>
       </div>
       <div class="f-row">
-        <label class="f"><span>✂️ 剪輯師（選填）</span><input type="text" id="pEditor" list="editorList" value="${esc(p.editor || '')}" placeholder="老闆排給誰剪">
-          <datalist id="editorList">${[...new Set(allProjects().map(x => x.editor).filter(Boolean))].map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist></label>
+        <label class="f"><span>✂️ 剪輯師（選填）</span><input type="text" id="pEditor" list="editorList" value="${esc(p.editor || '')}" placeholder="老闆排給誰剪；自己剪就填「自己」">
+          <datalist id="editorList">${[...new Set(['自己'].concat(allProjects().map(x => x.editor).filter(Boolean)))].map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist></label>
         <label class="f"><span>🎬 批次（選填）</span><input type="text" id="pBatch" value="${esc(p.batch || '')}" placeholder="例如：第1批"></label>
       </div>
       <p class="hint" style="margin-top:-6px">截止日適合製作期長的專案（例如拍攝），填了之後，通過後會改看截止日判斷逾期。</p>
@@ -1539,6 +1585,7 @@ const ACTIONS = {
   boardCat: el => { UI.boardCat = el.dataset.val; saveUI(); render(); },
   boardIp: el => { UI.boardIp = el.dataset.val; saveUI(); render(); },
   boardBatch: el => { UI.boardBatch = el.dataset.val; render(); },
+  progCopy: () => { const t = opsProgressText(UI.boardIp); if (!t) { toast('目前沒有進行中的批次'); return; } copyText(`🎬 操盤進度（${md(today())}）\n` + t); },
   goBatch: el => { UI.boardPlat = opsId(); UI.boardCat = 'all'; UI.boardIp = UI.ipSel; UI.boardBatch = el.dataset.val ? `${UI.ipSel}|${el.dataset.val}` : 'all'; saveUI(); location.hash = 'board'; },
   topicFilter: el => { UI.topicFilter = el.dataset.val; render(); },
   topicDel: el => { if (!arm(el, '刪?')) return; const t = DB().topics[el.dataset.id]; topicSel.delete(el.dataset.id); Store.remove('topics', el.dataset.id); toast(`已刪除「${t ? t.title : ''}」`); },

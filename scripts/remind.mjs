@@ -26,8 +26,12 @@ const weekStart = s => { const d = new Date(s + 'T00:00:00Z'); const dow = (d.ge
 const isoToTw = iso => iso ? twDate(new Date(iso).getTime()) : null;
 
 // 和網頁相同的逾期判斷
+let OPS_ID = 'ops';
+const EDIT_STAGES = ['assign', 'editing', 'review_op', 'review_ip', 'revising'];
 function projKey(p) {
   if (p.status === 'done' || p.status === 'proposed') return null;
+  // 操盤的 IP 在剪輯階段不提醒逾期，除非剪輯師是自己
+  if (p.platform === OPS_ID && EDIT_STAGES.includes(p.status) && !['自己', '我'].includes((p.editor || '').trim())) return null;
   if (p.status === 'prep' || p.status === 'rejected') return p.proposeDate || null;
   if (p.status === 'booked' && p.shootDate) return p.shootDate;
   return p.dueDate || p.launchDate || null;
@@ -72,6 +76,9 @@ for (const user of users) {
   const state = (await stateRef.get()).data() || {};
   if (!FORCE && state[KIND] === T) { console.log(`略過 ${user.id}：今天已經發過 ${KIND}`); continue; }
 
+  const metaState = (await user.collection('meta').doc('state').get()).data() || {};
+  const pls = (metaState.settings && metaState.settings.platforms) || [];
+  OPS_ID = ((pls.find(p => p.id === 'ops') || pls.find(p => p.name === '操盤')) || {}).id || 'ops';
   const tasks = (await user.collection('tasks').get()).docs.map(d => d.data());
   const projects = (await user.collection('projects').get()).docs.map(d => d.data());
   const msg = KIND === 'weekly' ? weeklyMessage(tasks, projects) : morningMessage(tasks, projects);
