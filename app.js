@@ -1397,9 +1397,11 @@ function openProject(id, preset = {}) {
       <p class="hint" style="margin-top:-6px">截止日適合製作期長的專案（例如拍攝），填了之後，通過後會改看截止日判斷逾期。</p>
       <label class="f"><span>備註</span><textarea id="pNote" rows="2">${esc(p.note)}</textarea></label>
 
-      <div class="sub-h"><span id="ftHead"></span><button class="btn small ghost" type="button" id="ftAll">全部勾選</button></div>
-      <div id="pFootage"></div>
-      <form id="ftAdd" class="quick" style="box-shadow:none" autocomplete="off"><textarea id="ftInput" rows="1" placeholder="輸入毛片名稱，按 Enter 新增（可一次貼上多行）" aria-label="新增毛片"></textarea><button class="btn small" type="submit">新增</button></form>
+      <details class="ft-box" id="ftBox" ${p.status === 'footage' || (p.footage && p.footage.length) ? 'open' : ''}>
+        <summary class="sub-h"><span id="ftHead"></span><button class="btn small ghost" type="button" id="ftAll">全部勾選</button></summary>
+        <div class="ft-body"><div id="pFootage"></div>
+        <form id="ftAdd" class="quick" style="box-shadow:none" autocomplete="off"><textarea id="ftInput" rows="1" placeholder="輸入毛片名稱，按 Enter 新增（可一次貼上多行）" aria-label="新增毛片"></textarea><button class="btn small" type="submit">新增</button></form></div>
+      </details>
 
       <div class="sub-h"><span id="rvHead">退件紀錄（${p.revisions.length} 次）</span></div>
       <div id="pRevs"></div>
@@ -1436,7 +1438,7 @@ function openProject(id, preset = {}) {
   };
   const renderFootage = () => {
     const n = p.footage.length, d = p.footage.filter(x => x.done).length;
-    $('#ftHead').textContent = n ? `🎞 毛片清單（已上傳 ${d} / ${n}）` : '🎞 毛片清單';
+    $('#ftHead').textContent = n ? `🎞 毛片清單（已上傳 ${d} / ${n}）` : '🎞 毛片清單（點開新增）';
     $('#ftAll').hidden = !n || d === n;
     $('#pFootage').innerHTML = n ? `<div class="mini-list ft-list">${p.footage.map(x => `<div class="ft-row ${x.done ? 'done' : ''}" data-fid="${x.id}">
         <input type="checkbox" data-ft="done" ${x.done ? 'checked' : ''} aria-label="已上傳">
@@ -1464,7 +1466,7 @@ function openProject(id, preset = {}) {
     if (!arm(b, '刪?')) return;
     const row = b.closest('[data-fid]'); p.footage = p.footage.filter(y => y.id !== row.dataset.fid); renderFootage(); saveFootage();
   });
-  $('#ftAll').onclick = () => { const now = new Date().toISOString(); p.footage.forEach(x => { if (!x.done) { x.done = true; x.at = now; x.date = x.date || today(); } }); renderFootage(); saveFootage(); afterCheck(); };
+  $('#ftAll').onclick = e => { e.preventDefault(); e.stopPropagation(); const now = new Date().toISOString(); p.footage.forEach(x => { if (!x.done) { x.done = true; x.at = now; x.date = x.date || today(); } }); renderFootage(); saveFootage(); afterCheck(); };
   $('#ftAdd').onsubmit = e => {
     e.preventDefault();
     const lines = $('#ftInput').value.split(/\r?\n/).map(x => x.replace(/^\s*(\d+[.、)）]|[-・•*])\s*/, '').trim()).filter(Boolean);

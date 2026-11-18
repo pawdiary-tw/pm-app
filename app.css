@@ -371,3 +371,10 @@ details.sec[open] > summary .sec-h::after{transform:rotate(90deg)}
 .ft-date input{width:auto!important;padding:3px 6px!important;font-size:.8rem}
 .ft-row.done .ft-date input{color:var(--muted)}
 @media (max-width:520px){.ft-row{flex-wrap:wrap}.ft-row .ttitle{flex-basis:calc(100% - 60px)}.ft-date{margin-left:26px}}
+
+.ft-box > summary{list-style:none;cursor:pointer}
+.ft-box > summary::-webkit-details-marker{display:none}
+.ft-box > summary #ftHead::before{content:"▸ ";display:inline-block;transition:transform .15s;color:var(--muted)}
+.ft-box[open] > summary #ftHead::before{transform:rotate(90deg)}
+.ft-box:not([open]) #ftAll{display:none}
+.ft-body{display:flex;flex-direction:column;gap:8px;margin-top:8px}
