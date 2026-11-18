@@ -29,6 +29,7 @@ const isoToTw = iso => iso ? twDate(new Date(iso).getTime()) : null;
 function projKey(p) {
   if (p.status === 'done' || p.status === 'proposed') return null;
   if (p.status === 'prep' || p.status === 'rejected') return p.proposeDate || null;
+  if (p.status === 'booked' && p.shootDate) return p.shootDate;
   return p.dueDate || p.launchDate || null;
 }
 
@@ -41,6 +42,7 @@ function morningMessage(tasks, projects) {
   const tm = addDays(T, 1), tomorrow = [];
   projects.filter(p => p.status !== 'done').forEach(p => {
     if (p.proposeDate === tm) tomorrow.push(`提案「${p.name}」`);
+    if (p.shootDate === tm) tomorrow.push(`拍攝「${p.name}」`);
     if (p.dueDate === tm) tomorrow.push(`截止「${p.name}」`);
     if (p.launchDate === tm) tomorrow.push(`上傳「${p.name}」`);
   });

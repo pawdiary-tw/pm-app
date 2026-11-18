@@ -28,6 +28,9 @@ const STATUS = [
   { id: 'rejected', name: '未通過需調整', bg: '#f6d4d1', fg: '#9b2018' },
   { id: 'approved', name: '已通過可執行', bg: '#cdeee6', fg: '#145c4c' },
   { id: 'doing', name: '執行中', bg: '#dcdcfa', fg: '#2f2f9a' },
+  { id: 'booked', name: '已約拍攝', bg: '#fde9a6', fg: '#5c4100' },
+  { id: 'footage', name: '過毛片／分類上傳', bg: '#cfeef2', fg: '#0f5560' },
+  { id: 'assign', name: '待排剪輯', bg: '#ffe0ec', fg: '#8a1f4d' },
   { id: 'editing', name: '剪輯中', bg: '#a3261b', fg: '#ffffff' },
   { id: 'review_op', name: '過片中', bg: '#f7c9b0', fg: '#6e2f12' },
   { id: 'review_ip', name: 'IP👀', bg: '#55308d', fg: '#ffffff' },
@@ -35,7 +38,9 @@ const STATUS = [
   { id: 'done', name: '已完成✅', bg: '#2f6e4b', fg: '#e3f6ea' },
 ];
 const ALL_COLS = () => STATUS.map(x => x.id);
+const OPS_COLS = ['approved', 'booked', 'footage', 'assign', 'editing', 'review_ip', 'revising', 'done'];
 const DEFAULT_COLS = {
+  ops: OPS_COLS,
   edit: ['doing', 'editing', 'review_op', 'review_ip', 'revising', 'done'],
   shoot: ['approved', 'doing', 'editing', 'review_op', 'review_ip', 'revising', 'done'],
 };
@@ -43,16 +48,17 @@ const platOrder = pl => { const all = ALL_COLS(); if (!pl || !Array.isArray(pl.o
 const platCols = pl => (pl && Array.isArray(pl.columns) && pl.columns.length) ? platOrder(pl).filter(id => pl.columns.includes(id)) : platOrder(pl);
 const STATUS_RULE = {
   prep: '逾期看「提案日」',
+  booked: '逾期看「拍攝日」',
   proposed: '等待回覆，不算逾期',
   rejected: '⚠️ 拖進這欄會跳出「退件紀錄」，退件次數 +1；逾期看「提案日」',
   revising: '⚠️ 拖進這欄會跳出「修改紀錄」（操盤手／IP）',
   done: '代表完成，會算進週報和月總結',
 };
 const statusRule = id => STATUS_RULE[id] || '逾期看「截止日」，沒填就看「上傳日」';
-const DEFAULT_NAMES = { shoot: { doing: '拍攝中' }, edit: { doing: '初剪中' } };
+const DEFAULT_NAMES = { shoot: { doing: '拍攝中' }, edit: { doing: '初剪中' }, ops: { approved: '待約拍攝', done: 'IP 確認✅' } };
 const stName = (id, platId) => { const pl = platId && Store.data && Store.data.settings.platforms.find(x => x.id === platId); return (pl && pl.colNames && pl.colNames[id]) || statusName(id); };
 const statusPill = (id, platId) => { const st = STATUS.find(x => x.id === id) || { name: id, bg: '#ddd', fg: '#333' }; return `<span class="spill" style="--sb:${st.bg};--sf:${st.fg}">${esc(stName(id, platId))}</span>`; };
-const ACTIVE = ['approved', 'doing', 'editing', 'review_op', 'review_ip', 'revising'];
+const ACTIVE = ['approved', 'doing', 'booked', 'footage', 'assign', 'editing', 'review_op', 'review_ip', 'revising'];
 const statusName = id => (STATUS.find(s => s.id === id) || {}).name || id;
 const PRIORITY = [{ id: 'high', name: '高' }, { id: 'mid', name: '中' }, { id: 'low', name: '低' }];
 const priName = id => (PRIORITY.find(p => p.id === id) || {}).name || '中';
@@ -71,15 +77,16 @@ function defaultPlatforms() {
     { id: 'brand', name: '品牌', color: '#2f9e6e', categories: ['活動討論', '其他'] },
     { id: 'edit', name: '剪輯', color: '#7a4fd0', categories: ['IG Reels', '短影音', '長影片', '廣告素材'] },
     { id: 'shoot', name: '拍攝', color: '#b8611a', categories: ['商品拍攝', '形象拍攝', '短影音拍攝', '活動紀錄'] },
+    { id: 'ops', name: '操盤', color: '#b5476b', categories: ['短影音'] },
   ]);
 }
 function withCols(list) {
-  list.forEach(p => { if (!p.columns) p.columns = (DEFAULT_COLS[p.id] || ALL_COLS()).slice(); if (!p.colNames) p.colNames = Object.assign({}, DEFAULT_NAMES[p.id] || {}); });
+  list.forEach(p => { if (!p.columns) p.columns = (DEFAULT_COLS[p.id] || ALL_COLS().filter(id => !['booked', 'footage', 'assign'].includes(id))).slice(); if (p.id === 'ops' && !p.order) p.order = OPS_COLS.concat(ALL_COLS().filter(id => !OPS_COLS.includes(id))); if (!p.colNames) p.colNames = Object.assign({}, DEFAULT_NAMES[p.id] || {}); });
   return list;
 }
 
 function emptyData() {
-  return { version: 1, meta: { addedEdit: true, addedShoot: true, addedCols: true, addedNames: true, editDoing: true }, settings: { platforms: defaultPlatforms(), ips: ['自己'] }, ipProfiles: {}, projects: {}, tasks: {} };
+  return { version: 1, meta: { addedEdit: true, addedShoot: true, addedCols: true, addedNames: true, editDoing: true, opsV1: true }, settings: { platforms: defaultPlatforms(), ips: ['自己'] }, ipProfiles: {}, projects: {}, tasks: {}, topics: {} };
 }
 
 /* IP 需求的預設欄位（新增 IP 時自動帶入，之後每個 IP 可以各自增減） */
@@ -107,6 +114,7 @@ const Store = {
     if (!this.data || !this.data.settings) { this.data = emptyData(); this.save(); }
     this.data.projects = this.data.projects || {};
     this.data.tasks = this.data.tasks || {};
+    this.data.topics = this.data.topics || {};
     this.data.meta = this.data.meta || {};
     if (!this.data.meta.addedEdit) {
       if (!this.data.settings.platforms.some(p => p.id === 'edit' || p.name === '剪輯')) this.data.settings.platforms.push(defaultPlatforms().find(p => p.id === 'edit'));
@@ -127,6 +135,29 @@ const Store = {
         if (Array.isArray(e.columns) && !e.columns.includes('doing')) e.columns.push('doing');
       }
       this.data.meta.editDoing = true; this.save();
+    }
+    if (!this.data.meta.opsV1) {
+      // 「操盤」平台改用新流程；之前借用其他欄位名稱的卡片，依名稱搬到對應的新欄位
+      const pls = this.data.settings.platforms;
+      let ops = pls.find(p => p.id === 'ops') || pls.find(p => p.name === '操盤');
+      if (!ops) { ops = defaultPlatforms().find(p => p.id === 'ops'); pls.push(ops); }
+      else {
+        const byName = { '排定拍攝日期': 'approved', '待約拍攝': 'approved', '約拍攝': 'approved', '拍攝中': 'booked', '已約拍攝': 'booked',
+          '上傳毛片': 'footage', '過毛片': 'footage', '過毛片／分類上傳': 'footage', '待排剪輯': 'assign', '剪輯中': 'editing', '初剪中': 'editing',
+          'IP👀': 'review_ip', '修改中': 'revising', '已完成✅': 'done', '已完成／已上傳': 'done', 'IP 確認✅': 'done' };
+        let moved = 0;
+        Object.values(this.data.projects).forEach(p => {
+          if (p.platform !== ops.id) return;
+          const shown = (ops.colNames || {})[p.status] || statusName(p.status);
+          const to = byName[shown];
+          if (to && to !== p.status) { p.status = to; moved++; }
+        });
+        this.data.meta.opsMoved = moved;
+      }
+      ops.columns = OPS_COLS.slice();
+      ops.order = OPS_COLS.concat(ALL_COLS().filter(id => !OPS_COLS.includes(id)));
+      ops.colNames = Object.assign({}, DEFAULT_NAMES.ops);
+      this.data.meta.opsV1 = true; this.save();
     }
     if (!Array.isArray(this.data.settings.ips)) { this.data.settings.ips = ['自己']; this.save(); }
     this.data.ipProfiles = this.data.ipProfiles || {};
@@ -174,6 +205,7 @@ const plain = o => JSON.parse(JSON.stringify(o));
 function currentDocs() {
   const d = Store.data, m = {};
   Object.values(d.tasks).forEach(t => { m['tasks/' + t.id] = t; });
+  Object.values(d.topics || {}).forEach(t => { m['topics/' + t.id] = t; });
   Object.values(d.projects).forEach(p => { m['projects/' + p.id] = p; });
   m['meta/state'] = { version: d.version || 1, settings: d.settings, ipProfiles: d.ipProfiles || {}, meta: d.meta || {} };
   return m;
@@ -240,8 +272,8 @@ async function startSync(user) {
       toast('已開啟同步，這台裝置的資料已上傳到雲端');
     } else {
       // 雲端已有資料：以雲端為準
-      const [ts, ps] = await Promise.all([ref.collection('tasks').get(), ref.collection('projects').get()]);
-      applyMeta(metaDoc); applyCollection('tasks', ts); applyCollection('projects', ps);
+      const [ts, ps, tp] = await Promise.all([ref.collection('tasks').get(), ref.collection('projects').get(), ref.collection('topics').get()]);
+      applyMeta(metaDoc); applyCollection('tasks', ts); applyCollection('projects', ps); applyCollection('topics', tp);
       Store.migrate(); Store.persistLocal();
       Sync.ready = true; render(); pushDiff();
     }
@@ -261,6 +293,7 @@ function listenRemote() {
   const onErr = e => { console.error(e); setSyncStatus('error'); };
   Sync.unsubs.push(ref.collection('tasks').onSnapshot(handle(s => applyCollection('tasks', s)), onErr));
   Sync.unsubs.push(ref.collection('projects').onSnapshot(handle(s => applyCollection('projects', s)), onErr));
+  Sync.unsubs.push(ref.collection('topics').onSnapshot(handle(s => applyCollection('topics', s)), onErr));
   Sync.unsubs.push(ref.collection('meta').doc('state').onSnapshot(handle(d => { if (d.exists) applyMeta(d); }), onErr));
 }
 function stopSync() { Sync.unsubs.forEach(u => u()); Sync.unsubs = []; Sync.ready = false; Sync.user = null; Sync.synced = {}; clearTimeout(Sync.timer); Sync.timer = null; }
@@ -357,6 +390,7 @@ const taskPlatId = t => { const p = projOf(t); return p ? p.platform : null; };
 function projKey(p) {
   if (p.status === 'done' || p.status === 'proposed') return null;
   if (p.status === 'prep' || p.status === 'rejected') return p.proposeDate ? { date: p.proposeDate, label: '提案日' } : null;
+  if (p.status === 'booked' && p.shootDate) return { date: p.shootDate, label: '拍攝日' };
   if (p.dueDate) return { date: p.dueDate, label: '截止日' };
   return p.launchDate ? { date: p.launchDate, label: '上傳日' } : null;
 }
@@ -475,7 +509,12 @@ function viewBoard() {
   if (!cur || (UI.boardCat !== 'all' && !cur.categories.includes(UI.boardCat))) UI.boardCat = 'all';
   const ips = DB().settings.ips;
   if (UI.boardIp !== 'all' && !ips.includes(UI.boardIp)) UI.boardIp = 'all';
-  const list = allProjects().filter(p => (UI.boardPlat === 'all' || p.platform === UI.boardPlat) && (UI.boardCat === 'all' || p.category === UI.boardCat) && (UI.boardIp === 'all' || p.ip === UI.boardIp));
+  let list = allProjects().filter(p => (UI.boardPlat === 'all' || p.platform === UI.boardPlat) && (UI.boardCat === 'all' || p.category === UI.boardCat) && (UI.boardIp === 'all' || p.ip === UI.boardIp));
+  const batches = [...new Set(list.map(p => p.batch).filter(Boolean))].sort();
+  if (!UI.boardBatch || (UI.boardBatch !== 'all' && !batches.includes(UI.boardBatch))) UI.boardBatch = 'all';
+  if (UI.boardBatch !== 'all') list = list.filter(p => p.batch === UI.boardBatch);
+  const batchChips = batches.length ? `<div class="chips sub"><span class="hint" style="align-self:center">批次：</span>${[`<button class="chip" data-act="boardBatch" data-val="all" aria-pressed="${UI.boardBatch === 'all'}">全部</button>`]
+    .concat(batches.map(b => `<button class="chip" data-act="boardBatch" data-val="${esc(b)}" aria-pressed="${UI.boardBatch === b}">${esc(b)}</button>`)).join('')}</div>` : '';
   const ipChips = ips.length > 1 ? `<div class="chips sub"><span class="hint" style="align-self:center">IP：</span>${[`<button class="chip" data-act="boardIp" data-val="all" aria-pressed="${UI.boardIp === 'all'}">全部</button>`]
     .concat(ips.map(n => `<button class="chip" data-act="boardIp" data-val="${esc(n)}" aria-pressed="${UI.boardIp === n}">${esc(n)}</button>`)).join('')}</div>` : '';
 
@@ -498,7 +537,7 @@ function viewBoard() {
 
   return `<div class="page wide">
     <header class="page-h"><div><h1>專案看板</h1><p class="sub">共 ${list.length} 個專案</p></div><button class="btn primary" data-act="newProject">＋ 新增專案</button></header>
-    <div class="filters"><div class="chips">${platChips}</div>${catChips}${ipChips}</div>
+    <div class="filters"><div class="chips">${platChips}</div>${catChips}${ipChips}${batchChips}</div>
     <div class="board-wrap" id="boardWrap"><div class="board" id="board">${cols}</div></div>
     <p class="hint">電腦：直接拖拉卡片換欄位。手機：按住卡片約半秒，感覺到震動後再拖。也可以點開專案改狀態。</p>
   </div>`;
@@ -508,10 +547,13 @@ function cardHTML(p, T) {
   const doneN = tasks.filter(t => t.done).length;
   const dates = [];
   if (p.proposeDate) dates.push(`提案 ${md(p.proposeDate)}`);
+  if (p.shootDate) dates.push(`拍攝 ${md(p.shootDate)}`);
   if (p.dueDate) dates.push(`截止 ${md(p.dueDate)}`);
   if (p.launchDate) dates.push(`上傳 ${md(p.launchDate)}`);
   const foot = [badgeHTML(projBadge(p, T))];
   if (p.ip) foot.push(`<span class="badge info">IP ${esc(p.ip)}</span>`);
+  if (p.batch) foot.push(`<span class="badge idle">🎬 ${esc(p.batch)}</span>`);
+  if (p.editor) foot.push(`<span class="badge idle">✂️ ${esc(p.editor)}</span>`);
   if (p.revisions.length) foot.push(`<span class="badge late">退件 ${p.revisions.length}</span>`);
   if (editsOf(p).length) foot.push(`<span class="badge warn">修改 ${editsOf(p).length}</span>`);
   if (tasks.length) foot.push(`<span class="badge idle">任務 ${doneN}/${tasks.length}</span>`);
@@ -670,6 +712,7 @@ function calendarEvents() {
   allProjects().forEach(p => {
     const done = p.status === 'done';
     add(p.proposeDate, { kind: 'proj', p, plat: p.platform, text: '提案・' + p.name, label: '提案日', done });
+    add(p.shootDate, { kind: 'proj', p, plat: p.platform, text: '拍攝・' + p.name, label: '拍攝日', done });
     add(p.dueDate, { kind: 'proj', p, plat: p.platform, text: '截止・' + p.name, label: '截止日', done });
     add(p.launchDate, { kind: 'proj', p, plat: p.platform, text: '上傳・' + p.name, label: '上傳日', done });
   });
@@ -759,7 +802,7 @@ function genWeekly(ws) {
   L.push(`📅 下週預計（${md(nws)} – ${md(nwe)}）`);
   const next = [];
   projects.filter(p => p.status !== 'done').forEach(p => {
-    [['proposeDate', '提案'], ['dueDate', '截止'], ['launchDate', '上傳']].forEach(([f, lab]) => { if (inRange(p[f], nws, nwe)) next.push({ d: p[f], s: `・${tagP(p)}${p.name}｜${md(p[f])} ${lab}` }); });
+    [['proposeDate', '提案'], ['shootDate', '拍攝'], ['dueDate', '截止'], ['launchDate', '上傳']].forEach(([f, lab]) => { if (inRange(p[f], nws, nwe)) next.push({ d: p[f], s: `・${tagP(p)}${p.name}｜${md(p[f])} ${lab}` }); });
   });
   tasks.filter(t => !t.done && inRange(t.due, nws, nwe)).forEach(t => next.push({ d: t.due, s: `・${tagT(t)}${t.title}｜${md(t.due)} 完成` }));
   next.sort((a, b) => a.d.localeCompare(b.d));
@@ -819,8 +862,9 @@ function genMonthly(ym) {
     if (c('editing')) parts.push(`剪輯中 ${c('editing')}`);
     if (c('review_op')) parts.push(`過片中 ${c('review_op')}`);
     if (c('review_ip')) parts.push(`IP 審核中 ${c('review_ip')}`);
+    ['booked', 'footage', 'assign'].forEach(id => { if (c(id)) parts.push(`${stName(id, pl.id)} ${c(id)}`); });
     if (c('revising')) parts.push(`修改中 ${c('revising')}`);
-    if (c('approved')) parts.push(`已通過 ${c('approved')}`);
+    if (c('approved')) parts.push(`${stName('approved', pl.id) === '已通過可執行' ? '已通過' : stName('approved', pl.id)} ${c('approved')}`);
     if (c('prep') + c('proposed')) parts.push(`提案中 ${c('prep') + c('proposed')}`);
     if (c('rejected')) parts.push(`需調整 ${c('rejected')}`);
     L.push(`${pl.name}：${parts.length ? parts.join('｜') : '本月無進行中專案'}`);
@@ -839,6 +883,8 @@ function genMonthly(ym) {
       const eo = eds.filter(r => r.by !== 'ip').length, ei = eds.length - eo;
       const doneMine = doneP.filter(p => p.ip === n);
       const avg = doneMine.length ? `｜平均每支修改 ${(doneMine.reduce((a, p) => a + editsOf(p).length, 0) / doneMine.length).toFixed(1)} 次` : '';
+      const ct = (DB().ipProfiles[n] || {}).contract;
+      if (ct && ct.total) { const fin = mine.filter(p => p.status === 'done' && p.platform === opsId()).length; L.push(`${n}：合約 ${ct.total} 支，已完成 ${fin} 支（${Math.round(fin / ct.total * 100)}%）`); }
       L.push(`${n}：完成 ${dn}｜進行中 ${act}${rv ? `｜退件 ${rv}` : ''}${eds.length ? `｜修改 ${eds.length}（操盤手 ${eo}、IP ${ei}）` : ''}${avg}`);
     });
     L.push('');
@@ -935,6 +981,7 @@ function ipPlanText(n) {
   return L.join('\n');
 }
 document.addEventListener('input', e => {
+  if (e.target.id === 'topicInput') autoGrow(e.target);
   const t = e.target; if (!t.dataset || !t.dataset.ipq || !UI.ipSel) return;
   const plan = planOf(UI.ipSel);
   plan[t.dataset.ipq] = t.value; ensureProfile(UI.ipSel).updatedAt = Date.now();
@@ -947,6 +994,133 @@ document.addEventListener('input', e => {
   clearTimeout(ipSaveTimer); ipSaveTimer = setTimeout(() => Store.save(), 400);
 });
 
+/* ================= 選題池（每個 IP 一份） ================= */
+const TOPIC_ST = [
+  { id: 'idea', name: '構思中', cls: 'idle' },
+  { id: 'boss', name: '老闆確認中', cls: 'info' },
+  { id: 'boss_rej', name: '老闆退回', cls: 'late' },
+  { id: 'ip', name: '給 IP 挑選', cls: 'warn' },
+  { id: 'picked', name: 'IP 選中', cls: 'ok' },
+  { id: 'spare', name: '備用', cls: 'idle' },
+  { id: 'drop', name: '不用', cls: 'idle' },
+];
+const topicStName = id => (TOPIC_ST.find(x => x.id === id) || {}).name || id;
+const opsId = () => { const pls = DB().settings.platforms; return ((pls.find(p => p.id === 'ops') || pls.find(p => p.name === '操盤')) || {}).id || 'ops'; };
+const topicsOf = n => Object.values(DB().topics || {}).filter(t => t.ip === n).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+const topicSel = new Set();
+function viewTopics(n) {
+  const all = topicsOf(n);
+  if (!UI.topicFilter) UI.topicFilter = 'all';
+  const shown = UI.topicFilter === 'all' ? all : all.filter(t => t.status === UI.topicFilter);
+  [...topicSel].forEach(id => { if (!all.some(t => t.id === id)) topicSel.delete(id); });
+  const prof = ensureProfile(n), ct = prof.contract || {};
+  const vids = allProjects().filter(p => p.ip === n && p.platform === opsId());
+  const fin = vids.filter(p => p.status === 'done').length;
+  const total = Number(ct.total) || 0;
+  const batches = {};
+  vids.forEach(p => { const k = p.batch || '未分批'; (batches[k] = batches[k] || []).push(p); });
+  const batchRows = Object.entries(batches).sort((a, b) => a[0].localeCompare(b[0])).map(([k, ps]) => {
+    const sd = ps.map(p => p.shootDate).filter(Boolean).sort()[0];
+    return `<div class="batch-row"><b>🎬 ${esc(k)}</b><span>${sd ? `拍攝 ${md(sd)}（${wd(sd)}）` : '還沒排拍攝日'}</span><span>${ps.length} 支</span><span class="badge ${ps.every(p => p.status === 'done') ? 'ok' : 'idle'}">完成 ${ps.filter(p => p.status === 'done').length}/${ps.length}</span><button class="btn small ghost" data-act="goBatch" data-val="${esc(k === '未分批' ? '' : k)}">看板 →</button></div>`;
+  }).join('');
+  const chips = [`<button class="chip" data-act="topicFilter" data-val="all" aria-pressed="${UI.topicFilter === 'all'}">全部 ${all.length}</button>`]
+    .concat(TOPIC_ST.map(st => { const c = all.filter(t => t.status === st.id).length; return c || UI.topicFilter === st.id ? `<button class="chip" data-act="topicFilter" data-val="${st.id}" aria-pressed="${UI.topicFilter === st.id}">${st.name} ${c}</button>` : ''; })).join('');
+  const rows = shown.map(t => {
+    const last = (t.revisions || []).slice(-1)[0];
+    const proj = t.projectId && DB().projects[t.projectId];
+    return `<div class="trow" data-tid="${t.id}">
+      <input type="checkbox" data-tsel="${t.id}" ${topicSel.has(t.id) ? 'checked' : ''} aria-label="勾選">
+      <div class="trow-main"><input type="text" class="ttitle" data-tfield="title" data-id="${t.id}" value="${esc(t.title)}" aria-label="選題名稱">
+        ${last ? `<span class="hint">💬 老闆意見（${md(last.date)}）：${esc(last.note)}${t.revisions.length > 1 ? `　共退回 ${t.revisions.length} 次` : ''}</span>` : ''}
+        ${proj ? `<span class="hint">🎬 已建卡：${esc(proj.batch || '')}・${esc(stName(proj.status, proj.platform))}</span>` : ''}</div>
+      <select data-tfield="status" data-id="${t.id}" class="tstatus st-${t.status}" aria-label="狀態">${TOPIC_ST.map(st => `<option value="${st.id}" ${st.id === t.status ? 'selected' : ''}>${st.name}</option>`).join('')}</select>
+      <button class="icon-btn" data-act="topicDel" data-id="${t.id}" aria-label="刪除選題">✕</button>
+    </div>`;
+  }).join('');
+  const nSel = topicSel.size;
+  return `<div class="topics">
+    <div class="contract">
+      <label class="ct-total">合約 <input type="number" min="0" id="ctTotal" value="${total || ''}" placeholder="30"> 支</label>
+      <div class="bar"><i style="width:${total ? Math.min(100, Math.round(fin / total * 100)) : 0}%"></i></div>
+      <span>已建卡 <b>${vids.length}</b>　已完成 <b>${fin}</b>${total ? `　剩 <b>${Math.max(0, total - fin)}</b> 支` : ''}</span>
+    </div>
+    ${batchRows ? `<div class="batches">${batchRows}</div>` : ''}
+    <form class="quick" id="topicForm" autocomplete="off"><textarea id="topicInput" rows="1" placeholder="新增選題，按 Enter 送出（可一次貼上多行，一行一個）" aria-label="新增選題"></textarea><button class="btn primary" type="submit">新增</button></form>
+    <div class="chips">${chips}</div>
+    <div class="tbar">
+      <label class="toggle small"><input type="checkbox" id="topicAll" ${shown.length && shown.every(t => topicSel.has(t.id)) ? 'checked' : ''}> 全選</label>
+      <span class="hint">已勾選 ${nSel} 個</span>
+      <select id="topicBulk" aria-label="改成狀態" ${nSel ? '' : 'disabled'}><option value="">把勾選的改成…</option>${TOPIC_ST.filter(x => x.id !== 'boss_rej').map(st => `<option value="${st.id}">${st.name}</option>`).join('')}</select>
+      <button class="btn small primary" data-act="topicBatch" ${nSel ? '' : 'disabled'}>🎬 用勾選的建立拍攝批次</button>
+      <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" data-act="topicCopy" data-val="boss">複製給老闆確認</button><button class="btn small" data-act="topicCopy" data-val="ip">複製給 IP 挑選</button></span>
+    </div>
+    <div class="list">${rows || `<div class="empty">${all.length ? '這個分類沒有選題' : '還沒有選題。在上面輸入題目，按 Enter 新增。'}</div>`}</div>
+    <p class="hint">流程：構思中 → 老闆確認中（退回會記錄意見）→ 給 IP 挑選 → IP 選中 → 勾選後建立拍攝批次，每個選題會變成「操盤」看板上的一張影片卡。沒選中的改成「備用」，下次可以再用。</p>
+  </div>`;
+}
+function topicListText(n, st) {
+  const ts = topicsOf(n).filter(t => t.status === st);
+  const list = ts.length ? ts : topicsOf(n).filter(t => topicSel.has(t.id));
+  if (!list.length) return null;
+  const head = st === 'ip' ? `【${n}】選題清單，請挑選想拍的（共 ${list.length} 個）` : `【${n}】選題，請幫忙確認（共 ${list.length} 個）`;
+  return head + '\n' + list.map((t, i) => `${i + 1}. ${t.title}`).join('\n');
+}
+function setTopicStatus(t, to) {
+  if (to === 'boss_rej' && t.status !== 'boss_rej') { askTopicReject(t); return false; }
+  t.status = to; t.updatedAt = Date.now(); return true;
+}
+function askTopicReject(t) {
+  openModal(`<div class="modal-h"><h2>老闆退回｜第 ${(t.revisions || []).length + 1} 次</h2><button class="icon-btn" data-act="closeModal" aria-label="關閉">✕</button></div>
+    <div class="modal-b"><p class="sub" style="margin:0">「${esc(t.title)}」</p>
+      <label class="f"><span>日期</span><input type="date" id="trDate" value="${today()}"></label>
+      <label class="f"><span>老闆的意見</span><textarea id="trNote" rows="3" placeholder="例如：角度太普通，改成上班族視角"></textarea></label></div>
+    <div class="modal-f"><div class="r"><button class="btn" data-act="closeModal">取消</button><button class="btn primary" id="trSave">記錄</button></div></div>`);
+  $('#trNote').focus();
+  $('#trSave').onclick = () => {
+    t.revisions = (t.revisions || []).concat([{ id: uid(), date: $('#trDate').value || today(), note: $('#trNote').value.trim() || '（未填寫意見）' }]);
+    t.status = 'boss_rej'; t.updatedAt = Date.now();
+    closeModal(); Store.upsert('topics', t); toast(`已記錄退回第 ${t.revisions.length} 次`);
+  };
+}
+function openBatchModal(n) {
+  const ts = topicsOf(n).filter(t => topicSel.has(t.id));
+  const already = ts.filter(t => t.projectId && DB().projects[t.projectId]);
+  const todo = ts.filter(t => !already.includes(t));
+  if (!todo.length) { toast('勾選的選題都已經建立過影片卡了'); return; }
+  const existing = new Set(allProjects().filter(p => p.ip === n && p.batch).map(p => p.batch));
+  let k = existing.size + 1; while (existing.has(`第${k}批`)) k++;
+  openModal(`<div class="modal-h"><h2>建立拍攝批次</h2><button class="icon-btn" data-act="closeModal" aria-label="關閉">✕</button></div>
+    <div class="modal-b">
+      <div class="f-row"><label class="f"><span>批次名稱</span><input type="text" id="bName" value="第${k}批"></label>
+        <label class="f"><span>🎥 拍攝日</span><input type="date" id="bDate"></label></div>
+      <p class="hint" style="margin:0">有填拍攝日，卡片會放在「已約拍攝」；還沒約好就放在「待約拍攝」。</p>
+      <div class="sub-h"><span>會建立 ${todo.length} 張影片卡</span></div>
+      <div class="mini-list">${todo.map(t => `<div class="row" style="cursor:default"><div class="row-main"><div class="row-title">${esc(n)}｜${esc(t.title)}</div></div></div>`).join('')}</div>
+      ${already.length ? `<p class="hint">另外 ${already.length} 個已經建過卡，會略過。</p>` : ''}
+    </div>
+    <div class="modal-f"><div class="r"><button class="btn" data-act="closeModal">取消</button><button class="btn primary" id="bSave">建立 ${todo.length} 張影片卡</button></div></div>`);
+  $('#bSave').onclick = () => {
+    const batch = $('#bName').value.trim() || `第${k}批`, shootDate = $('#bDate').value || null;
+    const pid = opsId(), now = Date.now();
+    todo.forEach((t, i) => {
+      const p = { id: uid(), name: `${n}｜${t.title}`, ip: n, platform: pid, category: '', status: shootDate ? 'booked' : 'approved', priority: 'mid',
+        proposeDate: null, launchDate: null, dueDate: null, shootDate, batch, editor: '', topicId: t.id, revisions: [], edits: [], completedAt: null, note: '', createdAt: now + i, updatedAt: now };
+      DB().projects[p.id] = p;
+      t.projectId = p.id; t.batch = batch; t.status = 'picked'; t.updatedAt = now;
+    });
+    topicSel.clear(); closeModal(); Store.save(); render();
+    toast(`已建立 ${todo.length} 張影片卡（${batch}）`, { label: '到看板', fn: () => { UI.boardPlat = pid; UI.boardCat = 'all'; UI.boardIp = n; UI.boardBatch = batch; saveUI(); location.hash = 'board'; } });
+  };
+}
+function addTopics(text) {
+  const n = UI.ipSel; if (!n) return 0;
+  const lines = text.split(/\r?\n/).map(x => x.replace(/^\s*(\d+[.、)）]|[-・•*])\s*/, '').trim()).filter(Boolean);
+  const now = Date.now();
+  lines.forEach((title, i) => { const t = { id: uid(), ip: n, title, status: 'idea', revisions: [], projectId: null, batch: '', createdAt: now + i, updatedAt: now }; DB().topics[t.id] = t; });
+  if (lines.length) { Store.save(); render(); }
+  return lines.length;
+}
+
 function viewIps() {
   const ips = DB().settings.ips;
   if (!ips.includes(UI.ipSel)) UI.ipSel = ips[0] || null;
@@ -957,8 +1131,17 @@ function viewIps() {
     const projs = allProjects().filter(p => p.ip === n);
     const active = projs.filter(p => p.status !== 'done');
     const isPlan = UI.ipTab === 'plan';
-    const tabsHtml = `<div class="tabs" role="tablist"><button role="tab" aria-selected="${!isPlan}" data-act="ipTab" data-val="spec">製作需求</button><button role="tab" aria-selected="${isPlan}" data-act="ipTab" data-val="plan">操盤心智圖 <span class="mm-n" id="planTabN">${planDone(planOf(n))}/40</span></button></div>`;
-    if (isPlan) {
+    const isTopics = UI.ipTab === 'topics';
+    const tabsHtml = `<div class="tabs" role="tablist"><button role="tab" aria-selected="${!isPlan && !isTopics}" data-act="ipTab" data-val="spec">製作需求</button><button role="tab" aria-selected="${isTopics}" data-act="ipTab" data-val="topics">選題池 <span class="mm-n">${topicsOf(n).length}</span></button><button role="tab" aria-selected="${isPlan}" data-act="ipTab" data-val="plan">操盤心智圖 <span class="mm-n" id="planTabN">${planDone(planOf(n))}/40</span></button></div>`;
+    if (isTopics) {
+      detail = `<section class="panel">
+      <div class="ip-head">
+        <input type="text" class="ip-name" id="ipName" value="${esc(n)}" aria-label="IP 名稱">
+        ${tabsHtml}
+      </div>
+      ${viewTopics(n)}
+    </section>`;
+    } else if (isPlan) {
       detail = `<section class="panel">
       <div class="ip-head">
         <input type="text" class="ip-name" id="ipName" value="${esc(n)}" aria-label="IP 名稱">
@@ -981,8 +1164,8 @@ function viewIps() {
     </section>
     ${active.length ? `<section class="sec"><div class="sec-h">進行中的專案<span class="n">${active.length}</span></div><div class="list">${active.map(p => projRow(p, today())).join('')}</div></section>` : ''}`;
   }
-  return `<div class="page ${UI.ipTab === 'plan' ? 'wide' : ''}">
-    <header class="page-h"><div><h1>IP 需求</h1><p class="sub">每個 IP 的製作規格，以及接案前要想清楚的操盤心智圖</p></div></header>
+  return `<div class="page ${UI.ipTab === 'plan' || UI.ipTab === 'topics' ? 'wide' : ''}">
+    <header class="page-h"><div><h1>IP 需求</h1><p class="sub">每個 IP 的製作規格、選題池和操盤心智圖</p></div></header>
     <div class="chips">${tabs}<input type="text" class="cat-add" placeholder="＋ 新增 IP" data-enter="addIp" aria-label="新增 IP"></div>
     ${detail}
   </div>`;
@@ -1008,6 +1191,7 @@ function renameIp(oldN, newN) {
   d.settings.ips[d.settings.ips.indexOf(oldN)] = newN;
   d.ipProfiles[newN] = ensureProfile(oldN); delete d.ipProfiles[oldN];
   allProjects().forEach(p => { if (p.ip === oldN) p.ip = newN; });
+  Object.values(d.topics || {}).forEach(t => { if (t.ip === oldN) t.ip = newN; });
   UI.ipSel = newN; saveUI(); Store.save(); render(); toast(`已改名為「${newN}」，相關專案也一起更新`);
 }
 
@@ -1143,6 +1327,12 @@ function openProject(id, preset = {}) {
         <label class="f"><span>📝 提案日</span><input type="date" id="pPropose" value="${p.proposeDate || ''}"></label>
         <label class="f"><span>🚀 上傳日</span><input type="date" id="pLaunch" value="${p.launchDate || ''}"></label>
         <label class="f"><span>⏳ 截止日（選填）</span><input type="date" id="pDue" value="${p.dueDate || ''}"></label>
+        <label class="f"><span>🎥 拍攝日（選填）</span><input type="date" id="pShoot" value="${p.shootDate || ''}"></label>
+      </div>
+      <div class="f-row">
+        <label class="f"><span>✂️ 剪輯師（選填）</span><input type="text" id="pEditor" list="editorList" value="${esc(p.editor || '')}" placeholder="老闆排給誰剪">
+          <datalist id="editorList">${[...new Set(allProjects().map(x => x.editor).filter(Boolean))].map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist></label>
+        <label class="f"><span>🎬 批次（選填）</span><input type="text" id="pBatch" value="${esc(p.batch || '')}" placeholder="例如：第1批"></label>
       </div>
       <p class="hint" style="margin-top:-6px">截止日適合製作期長的專案（例如拍攝），填了之後，通過後會改看截止日判斷逾期。</p>
       <label class="f"><span>備註</span><textarea id="pNote" rows="2">${esc(p.note)}</textarea></label>
@@ -1211,6 +1401,7 @@ function openProject(id, preset = {}) {
     if (p.ip && !DB().settings.ips.includes(p.ip)) DB().settings.ips.push(p.ip);
     p.priority = ($('#pPri [aria-pressed="true"]') || {}).dataset?.val || 'mid';
     p.proposeDate = $('#pPropose').value || null; p.launchDate = $('#pLaunch').value || null; p.dueDate = $('#pDue').value || null;
+    p.shootDate = $('#pShoot').value || null; p.editor = $('#pEditor').value.trim(); p.batch = $('#pBatch').value.trim();
     p.note = $('#pNote').value;
     const to = $('#pStatus').value;
     closeModal();
@@ -1288,6 +1479,12 @@ const ACTIONS = {
   boardPlat: el => { UI.boardPlat = el.dataset.val; UI.boardCat = 'all'; saveUI(); render(); },
   boardCat: el => { UI.boardCat = el.dataset.val; saveUI(); render(); },
   boardIp: el => { UI.boardIp = el.dataset.val; saveUI(); render(); },
+  boardBatch: el => { UI.boardBatch = el.dataset.val; render(); },
+  goBatch: el => { UI.boardPlat = opsId(); UI.boardCat = 'all'; UI.boardIp = UI.ipSel; UI.boardBatch = el.dataset.val || 'all'; saveUI(); location.hash = 'board'; },
+  topicFilter: el => { UI.topicFilter = el.dataset.val; render(); },
+  topicDel: el => { if (!arm(el, '刪?')) return; const t = DB().topics[el.dataset.id]; topicSel.delete(el.dataset.id); Store.remove('topics', el.dataset.id); toast(`已刪除「${t ? t.title : ''}」`); },
+  topicBatch: () => openBatchModal(UI.ipSel),
+  topicCopy: el => { const txt = topicListText(UI.ipSel, el.dataset.val); if (!txt) { toast(`沒有「${topicStName(el.dataset.val)}」的選題，也沒有勾選任何選題`); return; } copyText(txt); },
   pickDay: el => { UI.calSel = el.dataset.val; render(); },
   calMove: el => { UI.calMonth = addMonths(UI.calMonth, Number(el.dataset.val)); render(); },
   calToday: () => { UI.calMonth = today().slice(0, 7); UI.calSel = today(); render(); },
@@ -1414,6 +1611,7 @@ document.addEventListener('click', e => {
   if (card && !drag.suppressClick) openProject(card.dataset.id);
 });
 document.addEventListener('keydown', e => {
+  if (e.target.id === 'topicInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); e.target.form.requestSubmit(); return; }
   if (e.key === 'Escape') closeModal();
   if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('card')) openProject(e.target.dataset.id);
   if (e.key === 'Enter' && e.target.dataset && e.target.dataset.enter === 'addIp') {
@@ -1432,6 +1630,15 @@ document.addEventListener('keydown', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'ipName') { renameIp(UI.ipSel, t.value.trim()); return; }
+  if (t.dataset && t.dataset.tsel) { if (t.checked) topicSel.add(t.dataset.tsel); else topicSel.delete(t.dataset.tsel); render(); return; }
+  if (t.id === 'topicAll') { const n = UI.ipSel; const shown = topicsOf(n).filter(x => UI.topicFilter === 'all' || !UI.topicFilter || x.status === UI.topicFilter); shown.forEach(x => { if (t.checked) topicSel.add(x.id); else topicSel.delete(x.id); }); render(); return; }
+  if (t.id === 'topicBulk' && t.value) { const ids = [...topicSel]; ids.forEach(id => { const x = DB().topics[id]; if (x) { x.status = t.value; x.updatedAt = Date.now(); } }); Store.save(); toast(`已把 ${ids.length} 個選題改成「${topicStName(t.value)}」`); render(); return; }
+  if (t.id === 'ctTotal') { const prof = ensureProfile(UI.ipSel); prof.contract = Object.assign({}, prof.contract, { total: Math.max(0, parseInt(t.value, 10) || 0) }); Store.saveSettings(); return; }
+  if (t.dataset && t.dataset.tfield) {
+    const x = DB().topics[t.dataset.id]; if (!x) return;
+    if (t.dataset.tfield === 'title') { const v = t.value.trim(); if (v) { x.title = v; x.updatedAt = Date.now(); Store.save(); } return; }
+    if (t.dataset.tfield === 'status') { if (setTopicStatus(x, t.value)) Store.upsert('topics', x); else t.value = x.status; return; }
+  }
   if (t.id === 'quickWhen') { UI.qWhen = t.value; $('#quickDate').hidden = t.value !== 'pick'; if (t.value === 'pick') $('#quickDate').focus(); }
   if (t.id === 'quickDate') UI.qDate = t.value;
   if (t.id === 'quickProj') UI.qProj = t.value;
@@ -1447,6 +1654,12 @@ document.addEventListener('change', e => {
   }
 });
 document.addEventListener('submit', e => {
+  if (e.target.id === 'topicForm') {
+    e.preventDefault();
+    const n = addTopics($('#topicInput').value);
+    if (n) { toast(`已新增 ${n} 個選題`); const i = $('#topicInput'); if (i) i.focus(); }
+    return;
+  }
   if (e.target.id !== 'quickForm') return;
   e.preventDefault();
   const inp = $('#quickInput'), v = inp.value.trim(); if (!v) return;
