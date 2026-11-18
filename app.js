@@ -139,7 +139,7 @@ const DB = () => Store.data;
 
 let UI = { boardPlat: 'all', boardCat: 'all', boardIp: 'all', calMonth: null, calSel: null, repTab: 'week', repWeek: null, repMonth: null };
 try { Object.assign(UI, JSON.parse(localStorage.getItem(UI_KEY) || '{}')); } catch (e) { /* 忽略 */ }
-const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ boardPlat: UI.boardPlat, boardCat: UI.boardCat, boardIp: UI.boardIp, ipSel: UI.ipSel })); } catch (e) { /* 忽略 */ } };
+const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ boardPlat: UI.boardPlat, boardCat: UI.boardCat, boardIp: UI.boardIp, ipSel: UI.ipSel, ipTab: UI.ipTab })); } catch (e) { /* 忽略 */ } };
 
 /* ================= 雲端同步（Firebase） =================
    資料放在 users/{uid}/ 底下：tasks/{id}、projects/{id}、meta/state（設定、IP 需求）。
@@ -862,6 +862,82 @@ function viewReport() {
 }
 
 /* ================= IP 需求 ================= */
+/* IP 操盤心智圖：8 個面向 × 5 題 */
+const IP_PLAN = [
+  { id: 'aud', no: '①', name: '目標受眾', group: 'st', qs: [
+    ['誰在看？', '年齡／身分／生活情境'], ['最痛的 1–3 個問題？', ''], ['看完想得到什麼？', ''], ['什麼時候、在哪滑到？', ''], ['為什麼要追蹤這個 IP？', '']] },
+  { id: 'per', no: '②', name: '人設定位', group: 'st', qs: [
+    ['一句話定位？', '我是＿＿，幫＿＿解決＿＿'], ['專業／身分背書？', ''], ['個性標籤 3 個＋口頭禪？', ''], ['視覺符號？', '服裝／場景／字卡'], ['人設底線？', '絕對不做的事']] },
+  { id: 'ben', no: '③', name: '對標分析', group: 'st', qs: [
+    ['對標帳號 3–5 個？', '大／中／小各找'], ['他們的爆款公式？', ''], ['留言區都在問什麼？', ''], ['可以借的？要避開的？', ''], ['我們的差異化在哪？', '']] },
+  { id: 'mon', no: '④', name: '變現路徑', group: 'st', qs: [
+    ['收入來源？', '業配／商品／導購／服務'], ['轉換漏斗怎麼走？', '曝光→追蹤→信任→下單'], ['第一個要賣什麼？', ''], ['價格帶對得上受眾嗎？', ''], ['多久要看到第一筆收入？', '']] },
+  { id: 'pil', no: '⑤', name: '內容支柱', group: 'ex', qs: [
+    ['專業乾貨拍什麼？', '建立信任'], ['生活人設拍什麼？', '建立連結'], ['熱點娛樂拍什麼？', '擴大觸及'], ['轉換內容拍什麼？', '帶產品／服務'], ['四種內容比例？', '＿：＿：＿：＿']] },
+  { id: 'fmt', no: '⑥', name: '形式與平台', group: 'ex', qs: [
+    ['主要格式？', '口播／對話／vlog／圖文'], ['固定系列＋開場鉤子？', ''], ['平台怎麼分工？', 'IG／Threads／TikTok'], ['發文頻率？', '做得到的才算'], ['單支製作時間與成本？', '']] },
+  { id: 'kpi', no: '⑦', name: '數據指標', group: 'ex', qs: [
+    ['觸及目標？', '觀看數、非粉絲比例'], ['留存目標？', '3 秒留存、完播率'], ['互動目標？', '留言、分享、收藏'], ['轉換目標？', '追蹤、私訊、下單'], ['多久檢視一次？', '每週／每月']] },
+  { id: 'val', no: '⑧', name: '驗證與風險', group: 'ex', qs: [
+    ['最大的假設是什麼？', ''], ['用哪 10 支影片驗證？', ''], ['成功標準？', '先定好數字'], ['人設／爭議風險？', ''], ['停損點？', '沒效先調哪一格']] },
+];
+const PLAN_GROUPS = { st: { name: '策略：先想清楚（①–④）', color: 'green' }, ex: { name: '執行：做出來（⑤–⑧）', color: 'blue' } };
+const planOf = n => { const p = ensureProfile(n); p.plan = p.plan || {}; return p.plan; };
+const filled = v => !!(v && String(v).trim());
+const branchDone = (plan, b) => b.qs.filter((_, i) => filled(plan[b.id + i])).length;
+const planDone = plan => IP_PLAN.reduce((a, b) => a + branchDone(plan, b), 0) + (filled(plan.oneLine) ? 0 : 0);
+function viewIpPlan(n) {
+  const plan = planOf(n);
+  const total = IP_PLAN.length * 5, done = planDone(plan);
+  const overview = IP_PLAN.map(b => `<a class="mm-node mm-${b.group}" href="#ips" data-act="planJump" data-val="${b.id}"><b>${b.no} ${esc(b.name)}</b><span class="mm-n" id="pn-${b.id}">${branchDone(plan, b)}/5</span></a>`);
+  const groups = ['st', 'ex'].map(g => `<section class="mm-group mm-${g}">
+      <h3>${PLAN_GROUPS[g].name}</h3>
+      ${IP_PLAN.filter(b => b.group === g).map(b => `<div class="mm-branch" id="pb-${b.id}">
+        <div class="mm-pill"><b>${b.no} ${esc(b.name)}</b><span class="mm-n" id="pn2-${b.id}">${branchDone(plan, b)}/5</span></div>
+        <div class="mm-qs">${b.qs.map(([q, hint], i) => `<label class="mm-q ${filled(plan[b.id + i]) ? 'done' : ''}">
+            <span class="mm-qt">${esc(q)}</span>${hint && !hint.includes('＿') ? `<span class="mm-hint">${esc(hint)}</span>` : ''}
+            <textarea rows="2" data-ipq="${b.id + i}" placeholder="${esc(hint.includes('＿') ? hint : '＿＿＿＿＿＿＿＿')}" aria-label="${esc(q)}">${esc(plan[b.id + i] || '')}</textarea>
+          </label>`).join('')}</div>
+      </div>`).join('')}
+    </section>`).join('');
+  return `<div class="mm">
+    <div class="mm-top">
+      <div class="mm-center"><span class="mm-ip">${esc(n)}</span>
+        <input type="text" data-ipq="oneLine" value="${esc(plan.oneLine || '')}" placeholder="一句話：＿＿＿" aria-label="一句話介紹這個 IP"></div>
+      <div class="mm-overview">${overview.join('')}</div>
+    </div>
+    <div class="mm-progress"><div class="bar"><i id="planBar" style="width:${Math.round(done / total * 100)}%"></i></div><span id="planCount">已回答 ${done} / ${total} 題</span>
+      <span class="actions" style="margin-left:auto"><button class="btn primary" data-act="planCopy">複製心智圖</button></span></div>
+    <p class="hint">填寫順序 ①→⑧，一格一題。策略（①–④）沒想清楚，執行（⑤–⑧）拍再多都是在賭；⑧ 的停損點跑完，就回頭修正對應那一格。內容會自動儲存。</p>
+    ${groups}
+  </div>`;
+}
+function ipPlanText(n) {
+  const plan = planOf(n);
+  const L = [`【${n}】IP 操盤心智圖`];
+  if (filled(plan.oneLine)) L.push(`一句話：${plan.oneLine.trim()}`);
+  ['st', 'ex'].forEach(g => {
+    L.push('', `■ ${PLAN_GROUPS[g].name}`);
+    IP_PLAN.filter(b => b.group === g).forEach(b => {
+      L.push(`${b.no} ${b.name}`);
+      b.qs.forEach(([q], i) => { const v = plan[b.id + i]; L.push(`・${q}${filled(v) ? '\n　' + String(v).trim().split('\n').join('\n　') : '（未填）'}`); });
+    });
+  });
+  return L.join('\n');
+}
+document.addEventListener('input', e => {
+  const t = e.target; if (!t.dataset || !t.dataset.ipq || !UI.ipSel) return;
+  const plan = planOf(UI.ipSel);
+  plan[t.dataset.ipq] = t.value; ensureProfile(UI.ipSel).updatedAt = Date.now();
+  if (t.tagName === 'TEXTAREA') { autoGrow(t); const box = t.closest('.mm-q'); if (box) box.classList.toggle('done', filled(t.value)); }
+  IP_PLAN.forEach(b => { const c = branchDone(plan, b) + '/5'; ['pn-', 'pn2-'].forEach(p => { const el = document.getElementById(p + b.id); if (el) el.textContent = c; }); });
+  const done = planDone(plan), total = IP_PLAN.length * 5;
+  const bar = $('#planBar'); if (bar) bar.style.width = Math.round(done / total * 100) + '%';
+  const cnt = $('#planCount'); if (cnt) cnt.textContent = `已回答 ${done} / ${total} 題`;
+  const tn = $('#planTabN'); if (tn) tn.textContent = `${done}/${total}`;
+  clearTimeout(ipSaveTimer); ipSaveTimer = setTimeout(() => Store.save(), 400);
+});
+
 function viewIps() {
   const ips = DB().settings.ips;
   if (!ips.includes(UI.ipSel)) UI.ipSel = ips[0] || null;
@@ -871,11 +947,22 @@ function viewIps() {
     const n = UI.ipSel, prof = ensureProfile(n);
     const projs = allProjects().filter(p => p.ip === n);
     const active = projs.filter(p => p.status !== 'done');
-    detail = `<section class="panel">
+    const isPlan = UI.ipTab === 'plan';
+    const tabsHtml = `<div class="tabs" role="tablist"><button role="tab" aria-selected="${!isPlan}" data-act="ipTab" data-val="spec">製作需求</button><button role="tab" aria-selected="${isPlan}" data-act="ipTab" data-val="plan">操盤心智圖 <span class="mm-n" id="planTabN">${planDone(planOf(n))}/40</span></button></div>`;
+    if (isPlan) {
+      detail = `<section class="panel">
       <div class="ip-head">
         <input type="text" class="ip-name" id="ipName" value="${esc(n)}" aria-label="IP 名稱">
-        <div class="actions"><button class="btn primary" data-act="ipCopy">複製全部需求</button><button class="btn danger" data-act="ipDel">刪除 IP</button></div>
+        ${tabsHtml}
       </div>
+      ${viewIpPlan(n)}
+    </section>`;
+    } else detail = `<section class="panel">
+      <div class="ip-head">
+        <input type="text" class="ip-name" id="ipName" value="${esc(n)}" aria-label="IP 名稱">
+        ${tabsHtml}
+      </div>
+      <div class="actions"><button class="btn primary" data-act="ipCopy">複製全部需求</button><button class="btn danger" data-act="ipDel">刪除 IP</button></div>
       <p>${projs.length} 個專案（進行中 ${active.length}）。內容會自動儲存。按「複製全部需求」可以直接傳給剪輯師或攝影師。</p>
       <div class="ip-fields">${prof.fields.map(f => `<div class="ip-field">
           <div class="ip-field-h"><input type="text" value="${esc(f.label)}" data-ipf="label" data-id="${f.id}" aria-label="欄位名稱"><button class="icon-btn" data-act="ipDelField" data-id="${f.id}" aria-label="刪除欄位 ${esc(f.label)}">✕</button></div>
@@ -885,8 +972,8 @@ function viewIps() {
     </section>
     ${active.length ? `<section class="sec"><div class="sec-h">進行中的專案<span class="n">${active.length}</span></div><div class="list">${active.map(p => projRow(p, today())).join('')}</div></section>` : ''}`;
   }
-  return `<div class="page">
-    <header class="page-h"><div><h1>IP 需求</h1><p class="sub">記錄每個 IP 的剪輯風格、字幕、美肌數據等規格</p></div></header>
+  return `<div class="page ${UI.ipTab === 'plan' ? 'wide' : ''}">
+    <header class="page-h"><div><h1>IP 需求</h1><p class="sub">每個 IP 的製作規格，以及接案前要想清楚的操盤心智圖</p></div></header>
     <div class="chips">${tabs}<input type="text" class="cat-add" placeholder="＋ 新增 IP" data-enter="addIp" aria-label="新增 IP"></div>
     ${detail}
   </div>`;
@@ -1213,6 +1300,9 @@ const ACTIONS = {
   },
   ipSel: el => { UI.ipSel = el.dataset.val; saveUI(); render(); },
   ipCopy: () => copyText(ipSpecText(UI.ipSel)),
+  ipTab: el => { UI.ipTab = el.dataset.val; saveUI(); render(); },
+  planCopy: () => copyText(ipPlanText(UI.ipSel)),
+  planJump: el => { const t = document.getElementById('pb-' + el.dataset.val); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
   ipAddField: () => { ensureProfile(UI.ipSel).fields.push({ id: uid(), label: '新欄位', hint: '', value: '' }); Store.save(); render(); const ins = $$('[data-ipf="label"]'); const last = ins[ins.length - 1]; if (last) { last.focus(); last.select(); } },
   ipDelField: el => { if (!arm(el, '刪?')) return; const prof = ensureProfile(UI.ipSel); prof.fields = prof.fields.filter(f => f.id !== el.dataset.id); Store.save(); render(); },
   ipDel: el => {
@@ -1356,7 +1446,7 @@ function render() {
   const n = overdueCount(), badge = $('#navLate');
   if (badge) { badge.textContent = n; badge.hidden = !n; }
   if (route === 'board') { const w = $('#boardWrap'); if (keepScroll) w.scrollLeft = boardScroll; $('#board').addEventListener('pointerdown', onBoardPointerDown); }
-  if (route === 'ips') $$('textarea[data-ipf]').forEach(autoGrow);
+  if (route === 'ips') $$('textarea[data-ipf], textarea[data-ipq]').forEach(autoGrow);
   if (keepScroll) window.scrollTo(0, y); else window.scrollTo(0, 0);
   if (keepScroll && focusedId === 'quickInput' && $('#quickInput')) $('#quickInput').focus();
   lastRoute = route;
