@@ -515,9 +515,10 @@ function opsProgress(ipFilter) {
   const order = platCols(pl);
   return Object.keys(groups).sort().map(k => {
     const [ip, batch] = k.split('|'), list = groups[k];
-    const counts = {};
-    list.forEach(p => { counts[p.status] = (counts[p.status] || 0) + 1; });
-    const stages = order.concat(Object.keys(counts).filter(id => !order.includes(id))).filter(id => counts[id]).map(id => ({ id, name: stName(id, pid), n: counts[id] }));
+    const counts = {}, names = {};
+    const short = p => { const nm = p.name || ''; const pre = (p.ip || '') + '｜'; return p.ip && nm.indexOf(pre) === 0 ? nm.slice(pre.length) : nm; };
+    list.slice().sort((a, b) => short(a).localeCompare(short(b), 'zh-Hant', { numeric: true })).forEach(p => { counts[p.status] = (counts[p.status] || 0) + 1; (names[p.status] = names[p.status] || []).push(short(p)); });
+    const stages = order.concat(Object.keys(counts).filter(id => !order.includes(id))).filter(id => counts[id]).map(id => ({ id, name: stName(id, pid), n: counts[id], items: names[id] }));
     const done = counts.done || 0;
     return { key: `${ip}|${batch}`, ip, batch, total: list.length, done, stages, allDone: done === list.length };
   });
@@ -525,7 +526,7 @@ function opsProgress(ipFilter) {
 function opsProgressText(ipFilter) {
   const rows = opsProgress(ipFilter).filter(r => !r.allDone);
   if (!rows.length) return null;
-  return rows.map(r => `【${r.ip}】${r.batch}　完成 ${r.done}/${r.total}\n　${r.stages.filter(x => x.id !== 'done').map(x => `${x.name} ${x.n}`).join('、')}`).join('\n');
+  return rows.map(r => `【${r.ip}】${r.batch}　完成 ${r.done}/${r.total}\n` + r.stages.filter(x => x.id !== 'done').map(x => `　${x.name}：${x.items.join('、')}`).join('\n')).join('\n');
 }
 function opsProgressHTML() {
   const rows = opsProgress(UI.boardIp);
@@ -539,7 +540,7 @@ function opsProgressHTML() {
     ${shown.length ? shown.map(r => `<div class="prog-row">
       <button class="prog-name" data-act="boardBatch" data-val="${esc(r.key)}" title="只看這一批">${esc(r.ip)}・${esc(r.batch)}</button>
       <div class="bar"><i style="width:${Math.round(r.done / r.total * 100)}%"></i></div><span class="prog-n">${r.done}/${r.total}</span>
-      <div class="prog-stages">${r.stages.map(x => `<span class="prog-st">${statusPill(x.id, pid)}<b>${x.n}</b></span>`).join('')}</div>
+      <div class="prog-stages">${r.stages.map(x => `<span class="prog-st" title="${esc(x.items.join('、'))}">${statusPill(x.id, pid)}<b>${x.n}</b>${x.id !== 'done' ? `<span class="prog-items">${esc(x.items.join('、'))}</span>` : ''}</span>`).join('')}</div>
     </div>`).join('') : '<div class="empty" style="padding:6px 0;text-align:left">目前的批次都完成了 🎉</div>'}
   </section>`;
 }
