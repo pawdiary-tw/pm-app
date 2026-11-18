@@ -1441,7 +1441,7 @@ function openProject(id, preset = {}) {
     $('#pFootage').innerHTML = n ? `<div class="mini-list ft-list">${p.footage.map(x => `<div class="ft-row ${x.done ? 'done' : ''}" data-fid="${x.id}">
         <input type="checkbox" data-ft="done" ${x.done ? 'checked' : ''} aria-label="已上傳">
         <input type="text" class="ttitle" data-ft="name" value="${esc(x.name)}" aria-label="毛片名稱">
-        ${x.done && x.at ? `<span class="hint">${md(isoDate(x.at))} 上傳</span>` : ''}
+        <label class="ft-date" title="上傳日期"><span class="hint">上傳</span><input type="date" data-ft="date" value="${x.date || (x.at ? isoDate(x.at) : '')}" aria-label="上傳日期"></label>
         <button class="icon-btn" type="button" data-ft="del" aria-label="刪除">✕</button></div>`).join('')}</div>`
       : '<div class="empty" style="padding:4px 0;text-align:left">還沒有毛片。拍攝完把這支影片的毛片列出來，上傳一個勾一個。</div>';
   };
@@ -1455,7 +1455,8 @@ function openProject(id, preset = {}) {
   $('#pFootage').addEventListener('change', e => {
     const row = e.target.closest('[data-fid]'); if (!row) return;
     const x = p.footage.find(y => y.id === row.dataset.fid); if (!x) return;
-    if (e.target.dataset.ft === 'done') { x.done = e.target.checked; x.at = x.done ? new Date().toISOString() : null; renderFootage(); saveFootage(); afterCheck(); }
+    if (e.target.dataset.ft === 'done') { x.done = e.target.checked; x.at = x.done ? new Date().toISOString() : null; if (x.done && !x.date) x.date = today(); if (!x.done) x.date = null; renderFootage(); saveFootage(); afterCheck(); }
+    if (e.target.dataset.ft === 'date') { x.date = e.target.value || null; if (x.date && !x.done) { x.done = true; x.at = new Date().toISOString(); } renderFootage(); saveFootage(); afterCheck(); }
     if (e.target.dataset.ft === 'name') { const v = e.target.value.trim(); if (v) { x.name = v; saveFootage(); } }
   });
   $('#pFootage').addEventListener('click', e => {
@@ -1463,7 +1464,7 @@ function openProject(id, preset = {}) {
     if (!arm(b, '刪?')) return;
     const row = b.closest('[data-fid]'); p.footage = p.footage.filter(y => y.id !== row.dataset.fid); renderFootage(); saveFootage();
   });
-  $('#ftAll').onclick = () => { const now = new Date().toISOString(); p.footage.forEach(x => { if (!x.done) { x.done = true; x.at = now; } }); renderFootage(); saveFootage(); afterCheck(); };
+  $('#ftAll').onclick = () => { const now = new Date().toISOString(); p.footage.forEach(x => { if (!x.done) { x.done = true; x.at = now; x.date = x.date || today(); } }); renderFootage(); saveFootage(); afterCheck(); };
   $('#ftAdd').onsubmit = e => {
     e.preventDefault();
     const lines = $('#ftInput').value.split(/\r?\n/).map(x => x.replace(/^\s*(\d+[.、)）]|[-・•*])\s*/, '').trim()).filter(Boolean);
