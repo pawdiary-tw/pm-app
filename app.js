@@ -553,6 +553,7 @@ function cardHTML(p, T) {
   const foot = [badgeHTML(projBadge(p, T))];
   if (p.ip) foot.push(`<span class="badge info">IP ${esc(p.ip)}</span>`);
   if (p.batch) foot.push(`<span class="badge idle">🎬 ${esc(p.batch)}</span>`);
+  if (p.footage && p.footage.length) { const d = p.footage.filter(x => x.done).length; foot.push(`<span class="badge ${d === p.footage.length ? 'ok' : 'warn'}">🎞 毛片 ${d}/${p.footage.length}</span>`); }
   if (p.editor) foot.push(`<span class="badge idle">✂️ ${esc(p.editor)}</span>`);
   if (p.revisions.length) foot.push(`<span class="badge late">退件 ${p.revisions.length}</span>`);
   if (editsOf(p).length) foot.push(`<span class="badge warn">修改 ${editsOf(p).length}</span>`);
@@ -1337,7 +1338,11 @@ function openProject(id, preset = {}) {
       <p class="hint" style="margin-top:-6px">截止日適合製作期長的專案（例如拍攝），填了之後，通過後會改看截止日判斷逾期。</p>
       <label class="f"><span>備註</span><textarea id="pNote" rows="2">${esc(p.note)}</textarea></label>
 
-      <div class="sub-h"><span>退件紀錄（${p.revisions.length} 次）</span></div>
+      <div class="sub-h"><span id="ftHead"></span><button class="btn small ghost" type="button" id="ftAll">全部勾選</button></div>
+      <div id="pFootage"></div>
+      <form id="ftAdd" class="quick" style="box-shadow:none" autocomplete="off"><textarea id="ftInput" rows="1" placeholder="輸入毛片名稱，按 Enter 新增（可一次貼上多行）" aria-label="新增毛片"></textarea><button class="btn small" type="submit">新增</button></form>
+
+      <div class="sub-h"><span id="rvHead">退件紀錄（${p.revisions.length} 次）</span></div>
       <div id="pRevs"></div>
       <div class="inline-add"><input type="date" id="rvDate" value="${today()}" aria-label="退件日期"><input type="text" id="rvNote" placeholder="補記一筆修改意見（不會改變狀態）" aria-label="修改意見"><button class="btn small" type="button" id="rvAdd">加入</button></div>
 
@@ -1351,7 +1356,7 @@ function openProject(id, preset = {}) {
     <div class="modal-f">${isNew ? '' : '<button class="btn danger" id="pDel">刪除專案</button>'}<div class="r"><button class="btn" data-act="closeModal">取消</button><button class="btn primary" id="pSave">儲存</button></div></div>`);
 
   const renderRevs = () => {
-    $('.sub-h span', $('#modal')).textContent = `退件紀錄（${p.revisions.length} 次）`;
+    $('#rvHead').textContent = `退件紀錄（${p.revisions.length} 次）`;
     $('#pRevs').innerHTML = p.revisions.length ? `<div class="timeline">${p.revisions.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => `<div class="tl-item"><div class="d">第 ${i + 1} 次・${md(r.date)}（${wd(r.date)}）<button class="icon-btn" type="button" data-rv="${r.id}" aria-label="刪除這筆">✕</button></div><p>${esc(r.note)}</p></div>`).join('')}</div>`
       : '<div class="empty" style="padding:4px 0;text-align:left">還沒有退件紀錄。把卡片拖到「未通過需調整」就會自動記錄。</div>';
     $$('[data-rv]', $('#pRevs')).forEach(b => b.onclick = () => { if (!arm(b, '確定？')) return; p.revisions = p.revisions.filter(r => r.id !== b.dataset.rv); renderRevs(); });
@@ -1366,6 +1371,48 @@ function openProject(id, preset = {}) {
     $$('[data-ed]', $('#pEdits')).forEach(b => b.onclick = () => { if (!arm(b, '確定？')) return; p.edits = p.edits.filter(r => r.id !== b.dataset.ed); renderEdits(); });
   };
   renderEdits();
+  p.footage = (p.footage || []).slice();
+  const saveFootage = () => {
+    if (!isNew && DB().projects[p.id]) { DB().projects[p.id].footage = JSON.parse(JSON.stringify(p.footage)); DB().projects[p.id].updatedAt = Date.now(); Store.save(); render(); }
+  };
+  const renderFootage = () => {
+    const n = p.footage.length, d = p.footage.filter(x => x.done).length;
+    $('#ftHead').textContent = n ? `🎞 毛片清單（已上傳 ${d} / ${n}）` : '🎞 毛片清單';
+    $('#ftAll').hidden = !n || d === n;
+    $('#pFootage').innerHTML = n ? `<div class="mini-list ft-list">${p.footage.map(x => `<div class="ft-row ${x.done ? 'done' : ''}" data-fid="${x.id}">
+        <input type="checkbox" data-ft="done" ${x.done ? 'checked' : ''} aria-label="已上傳">
+        <input type="text" class="ttitle" data-ft="name" value="${esc(x.name)}" aria-label="毛片名稱">
+        ${x.done && x.at ? `<span class="hint">${md(isoDate(x.at))} 上傳</span>` : ''}
+        <button class="icon-btn" type="button" data-ft="del" aria-label="刪除">✕</button></div>`).join('')}</div>`
+      : '<div class="empty" style="padding:4px 0;text-align:left">還沒有毛片。拍攝完把這支影片的毛片列出來，上傳一個勾一個。</div>';
+  };
+  const afterCheck = () => {
+    const n = p.footage.length, d = p.footage.filter(x => x.done).length;
+    if (n && d === n && !isNew && p.status === 'footage') {
+      toast('毛片都上傳完了！', { label: '移到待排剪輯', fn: () => { const real = DB().projects[p.id]; if (!real) return; applyStatus(real, 'assign'); Store.upsert('projects', real); p.status = 'assign'; const sel = $('#pStatus'); if (sel) sel.value = 'assign'; } });
+    }
+  };
+  renderFootage();
+  $('#pFootage').addEventListener('change', e => {
+    const row = e.target.closest('[data-fid]'); if (!row) return;
+    const x = p.footage.find(y => y.id === row.dataset.fid); if (!x) return;
+    if (e.target.dataset.ft === 'done') { x.done = e.target.checked; x.at = x.done ? new Date().toISOString() : null; renderFootage(); saveFootage(); afterCheck(); }
+    if (e.target.dataset.ft === 'name') { const v = e.target.value.trim(); if (v) { x.name = v; saveFootage(); } }
+  });
+  $('#pFootage').addEventListener('click', e => {
+    const b = e.target.closest('[data-ft="del"]'); if (!b) return;
+    if (!arm(b, '刪?')) return;
+    const row = b.closest('[data-fid]'); p.footage = p.footage.filter(y => y.id !== row.dataset.fid); renderFootage(); saveFootage();
+  });
+  $('#ftAll').onclick = () => { const now = new Date().toISOString(); p.footage.forEach(x => { if (!x.done) { x.done = true; x.at = now; } }); renderFootage(); saveFootage(); afterCheck(); };
+  $('#ftAdd').onsubmit = e => {
+    e.preventDefault();
+    const lines = $('#ftInput').value.split(/\r?\n/).map(x => x.replace(/^\s*(\d+[.、)）]|[-・•*])\s*/, '').trim()).filter(Boolean);
+    if (!lines.length) return;
+    lines.forEach(name => p.footage.push({ id: uid(), name, done: false, at: null }));
+    $('#ftInput').value = ''; $('#ftInput').style.height = ''; renderFootage(); saveFootage();
+  };
+  $('#ftInput').addEventListener('input', e => autoGrow(e.target));
   $('#eaAdd').onclick = () => { const note = $('#eaNote').value.trim(); if (!note) { $('#eaNote').focus(); return; } p.edits.push({ id: uid(), date: $('#eaDate').value || today(), note, by: $('#eaBy').value }); p.edits.sort((a, b) => a.date.localeCompare(b.date)); $('#eaNote').value = ''; renderEdits(); };
   $('#rvAdd').onclick = () => { const note = $('#rvNote').value.trim(); if (!note) { $('#rvNote').focus(); return; } p.revisions.push({ id: uid(), date: $('#rvDate').value || today(), note }); p.revisions.sort((a, b) => a.date.localeCompare(b.date)); $('#rvNote').value = ''; renderRevs(); };
 
@@ -1611,6 +1658,7 @@ document.addEventListener('click', e => {
   if (card && !drag.suppressClick) openProject(card.dataset.id);
 });
 document.addEventListener('keydown', e => {
+  if (e.target.id === 'ftInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); e.target.form.requestSubmit(); return; }
   if (e.target.id === 'topicInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); e.target.form.requestSubmit(); return; }
   if (e.key === 'Escape') closeModal();
   if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('card')) openProject(e.target.dataset.id);

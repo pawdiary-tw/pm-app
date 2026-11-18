@@ -21,6 +21,7 @@
   --star:#f4c04a; --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark}
 
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.55;-webkit-text-size-adjust:100%}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -337,3 +338,13 @@ details.sec[open] > summary .sec-h::after{transform:rotate(90deg)}
 
 #topicInput{border:0;background:none;padding:8px 10px;font-size:1rem;flex:1 1 220px;min-width:0;resize:none;overflow:hidden;line-height:1.5}
 #topicInput:focus{outline:none}
+
+/* ---------- 毛片清單 ---------- */
+.ft-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid var(--line)}
+.ft-row:first-child{border-top:0}
+.ft-row input[type=checkbox]{width:18px;height:18px;accent-color:var(--ok);flex:none}
+.ft-row .ttitle{flex:1;min-width:0}
+.ft-row.done .ttitle{text-decoration:line-through;color:var(--muted)}
+.ft-row .hint{white-space:nowrap}
+#ftInput{border:0;background:none;padding:6px 8px;font-size:.92rem;flex:1 1 200px;min-width:0;resize:none;overflow:hidden;line-height:1.5}
+#ftInput:focus{outline:none}
