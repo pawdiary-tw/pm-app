@@ -179,7 +179,7 @@ const DB = () => Store.data;
 
 let UI = { boardPlat: 'all', boardCat: 'all', boardIp: 'all', calMonth: null, calSel: null, repTab: 'week', repWeek: null, repMonth: null };
 try { Object.assign(UI, JSON.parse(localStorage.getItem(UI_KEY) || '{}')); } catch (e) { /* 忽略 */ }
-const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ boardPlat: UI.boardPlat, boardCat: UI.boardCat, boardIp: UI.boardIp, ipSel: UI.ipSel, ipTab: UI.ipTab })); } catch (e) { /* 忽略 */ } };
+const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ boardPlat: UI.boardPlat, boardCat: UI.boardCat, boardIp: UI.boardIp, ipSel: UI.ipSel, ipTab: UI.ipTab, hideDoneBatches: UI.hideDoneBatches })); } catch (e) { /* 忽略 */ } };
 
 /* ================= 雲端同步（Firebase） =================
    資料放在 users/{uid}/ 底下：tasks/{id}、projects/{id}、meta/state（設定、IP 需求）。
@@ -510,11 +510,23 @@ function viewBoard() {
   const ips = DB().settings.ips;
   if (UI.boardIp !== 'all' && !ips.includes(UI.boardIp)) UI.boardIp = 'all';
   let list = allProjects().filter(p => (UI.boardPlat === 'all' || p.platform === UI.boardPlat) && (UI.boardCat === 'all' || p.category === UI.boardCat) && (UI.boardIp === 'all' || p.ip === UI.boardIp));
-  const batches = [...new Set(list.map(p => p.batch).filter(Boolean))].sort();
-  if (!UI.boardBatch || (UI.boardBatch !== 'all' && !batches.includes(UI.boardBatch))) UI.boardBatch = 'all';
-  if (UI.boardBatch !== 'all') list = list.filter(p => p.batch === UI.boardBatch);
-  const batchChips = batches.length ? `<div class="chips sub"><span class="hint" style="align-self:center">批次：</span>${[`<button class="chip" data-act="boardBatch" data-val="all" aria-pressed="${UI.boardBatch === 'all'}">全部</button>`]
-    .concat(batches.map(b => `<button class="chip" data-act="boardBatch" data-val="${esc(b)}" aria-pressed="${UI.boardBatch === b}">${esc(b)}</button>`)).join('')}</div>` : '';
+  // 批次＝同一個 IP 的同一批；整批都到最後一欄就算完成
+  const bkey = p => p.batch ? `${p.ip || ''}|${p.batch}` : null;
+  const groups = {};
+  list.forEach(p => { const k = bkey(p); if (k) (groups[k] = groups[k] || []).push(p); });
+  const keys = Object.keys(groups).sort();
+  const multiIp = new Set(keys.map(k => k.split('|')[0])).size > 1;
+  const bLabel = k => { const [ip, b] = k.split('|'); return multiIp ? `${ip}・${b}` : b; };
+  const doneKeys = keys.filter(k => groups[k].every(p => p.status === 'done'));
+  if (!UI.boardBatch || (UI.boardBatch !== 'all' && !keys.includes(UI.boardBatch))) UI.boardBatch = 'all';
+  const hideDone = UI.hideDoneBatches !== false;
+  let hiddenN = 0;
+  if (UI.boardBatch !== 'all') list = list.filter(p => bkey(p) === UI.boardBatch);
+  else if (hideDone && doneKeys.length) { const before = list.length; list = list.filter(p => !doneKeys.includes(bkey(p))); hiddenN = before - list.length; }
+  const batchChips = keys.length ? `<div class="chips sub"><span class="hint" style="align-self:center">批次：</span>${[`<button class="chip" data-act="boardBatch" data-val="all" aria-pressed="${UI.boardBatch === 'all'}">全部</button>`]
+    .concat(keys.map(k => `<button class="chip" data-act="boardBatch" data-val="${esc(k)}" aria-pressed="${UI.boardBatch === k}">${doneKeys.includes(k) ? '✅ ' : ''}${esc(bLabel(k))}</button>`)).join('')}
+    <label class="toggle small" style="margin-left:8px"><input type="checkbox" id="hideDoneB" ${hideDone ? 'checked' : ''}> 隱藏已完成的批次</label>
+    ${hiddenN ? `<span class="hint" style="align-self:center">（已收起 ${doneKeys.length} 批、${hiddenN} 張，點批次名稱可以單獨查看）</span>` : ''}</div>` : '';
   const ipChips = ips.length > 1 ? `<div class="chips sub"><span class="hint" style="align-self:center">IP：</span>${[`<button class="chip" data-act="boardIp" data-val="all" aria-pressed="${UI.boardIp === 'all'}">全部</button>`]
     .concat(ips.map(n => `<button class="chip" data-act="boardIp" data-val="${esc(n)}" aria-pressed="${UI.boardIp === n}">${esc(n)}</button>`)).join('')}</div>` : '';
 
@@ -1110,7 +1122,7 @@ function openBatchModal(n) {
       t.projectId = p.id; t.batch = batch; t.status = 'picked'; t.updatedAt = now;
     });
     topicSel.clear(); closeModal(); Store.save(); render();
-    toast(`已建立 ${todo.length} 張影片卡（${batch}）`, { label: '到看板', fn: () => { UI.boardPlat = pid; UI.boardCat = 'all'; UI.boardIp = n; UI.boardBatch = batch; saveUI(); location.hash = 'board'; } });
+    toast(`已建立 ${todo.length} 張影片卡（${batch}）`, { label: '到看板', fn: () => { UI.boardPlat = pid; UI.boardCat = 'all'; UI.boardIp = n; UI.boardBatch = `${n}|${batch}`; saveUI(); location.hash = 'board'; } });
   };
 }
 function addTopics(text) {
@@ -1527,7 +1539,7 @@ const ACTIONS = {
   boardCat: el => { UI.boardCat = el.dataset.val; saveUI(); render(); },
   boardIp: el => { UI.boardIp = el.dataset.val; saveUI(); render(); },
   boardBatch: el => { UI.boardBatch = el.dataset.val; render(); },
-  goBatch: el => { UI.boardPlat = opsId(); UI.boardCat = 'all'; UI.boardIp = UI.ipSel; UI.boardBatch = el.dataset.val || 'all'; saveUI(); location.hash = 'board'; },
+  goBatch: el => { UI.boardPlat = opsId(); UI.boardCat = 'all'; UI.boardIp = UI.ipSel; UI.boardBatch = el.dataset.val ? `${UI.ipSel}|${el.dataset.val}` : 'all'; saveUI(); location.hash = 'board'; },
   topicFilter: el => { UI.topicFilter = el.dataset.val; render(); },
   topicDel: el => { if (!arm(el, '刪?')) return; const t = DB().topics[el.dataset.id]; topicSel.delete(el.dataset.id); Store.remove('topics', el.dataset.id); toast(`已刪除「${t ? t.title : ''}」`); },
   topicBatch: () => openBatchModal(UI.ipSel),
@@ -1678,6 +1690,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'ipName') { renameIp(UI.ipSel, t.value.trim()); return; }
+  if (t.id === 'hideDoneB') { UI.hideDoneBatches = t.checked; saveUI(); render(); return; }
   if (t.dataset && t.dataset.tsel) { if (t.checked) topicSel.add(t.dataset.tsel); else topicSel.delete(t.dataset.tsel); render(); return; }
   if (t.id === 'topicAll') { const n = UI.ipSel; const shown = topicsOf(n).filter(x => UI.topicFilter === 'all' || !UI.topicFilter || x.status === UI.topicFilter); shown.forEach(x => { if (t.checked) topicSel.add(x.id); else topicSel.delete(x.id); }); render(); return; }
   if (t.id === 'topicBulk' && t.value) { const ids = [...topicSel]; ids.forEach(id => { const x = DB().topics[id]; if (x) { x.status = t.value; x.updatedAt = Date.now(); } }); Store.save(); toast(`已把 ${ids.length} 個選題改成「${topicStName(t.value)}」`); render(); return; }
