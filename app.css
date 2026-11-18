@@ -301,3 +301,13 @@ details.sec[open] > summary .sec-h::after{transform:rotate(90deg)}
 .mm-hint{font-size:.74rem;color:var(--muted)}
 .mm-q textarea{border:0;background:var(--sunk);padding:6px 8px;font-size:.88rem;min-height:38px;overflow:hidden;margin-top:3px}
 .panel .tabs .mm-n{margin-left:4px}
+
+/* ---------- 欄位設定 ---------- */
+.collist{display:flex;flex-direction:column;gap:8px}
+.colrow{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--surface)}
+.colrow-move{display:flex;flex-direction:column;gap:2px}
+.colrow-move .icon-btn{padding:4px 8px;font-size:.75rem;border:1px solid var(--line);background:var(--bg)}
+.colrow-main{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.colrow-h{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.toggle.small{font-size:.8rem;gap:4px}
+.toggle.small input{width:15px;height:15px}

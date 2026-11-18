@@ -39,7 +39,16 @@ const DEFAULT_COLS = {
   edit: ['doing', 'editing', 'review_op', 'review_ip', 'revising', 'done'],
   shoot: ['approved', 'doing', 'editing', 'review_op', 'review_ip', 'revising', 'done'],
 };
-const platCols = pl => (pl && Array.isArray(pl.columns) && pl.columns.length) ? STATUS.map(x => x.id).filter(id => pl.columns.includes(id)) : ALL_COLS();
+const platOrder = pl => { const all = ALL_COLS(); if (!pl || !Array.isArray(pl.order)) return all; const o = pl.order.filter(id => all.includes(id)); return o.concat(all.filter(id => !o.includes(id))); };
+const platCols = pl => (pl && Array.isArray(pl.columns) && pl.columns.length) ? platOrder(pl).filter(id => pl.columns.includes(id)) : platOrder(pl);
+const STATUS_RULE = {
+  prep: '逾期看「提案日」',
+  proposed: '等待回覆，不算逾期',
+  rejected: '⚠️ 拖進這欄會跳出「退件紀錄」，退件次數 +1；逾期看「提案日」',
+  revising: '⚠️ 拖進這欄會跳出「修改紀錄」（操盤手／IP）',
+  done: '代表完成，會算進週報和月總結',
+};
+const statusRule = id => STATUS_RULE[id] || '逾期看「截止日」，沒填就看「上傳日」';
 const DEFAULT_NAMES = { shoot: { doing: '拍攝中' }, edit: { doing: '初剪中' } };
 const stName = (id, platId) => { const pl = platId && Store.data && Store.data.settings.platforms.find(x => x.id === platId); return (pl && pl.colNames && pl.colNames[id]) || statusName(id); };
 const statusPill = (id, platId) => { const st = STATUS.find(x => x.id === id) || { name: id, bg: '#ddd', fg: '#333' }; return `<span class="spill" style="--sb:${st.bg};--sf:${st.fg}">${esc(stName(id, platId))}</span>`; };
@@ -476,7 +485,7 @@ function viewBoard() {
     .concat(cur.categories.map(c => `<button class="chip" data-act="boardCat" data-val="${esc(c)}" aria-pressed="${UI.boardCat === c}">${esc(c)}</button>`)).join('')}</div>` : '';
 
   const want = cur ? platCols(cur) : ALL_COLS();
-  const shown = STATUS.filter(s => want.includes(s.id) || list.some(p => p.status === s.id));
+  const shown = (cur ? platOrder(cur) : ALL_COLS()).map(id => STATUS.find(x => x.id === id)).filter(s => want.includes(s.id) || list.some(p => p.status === s.id));
   const firstCol = shown[0] ? shown[0].id : 'prep';
   const cols = shown.map(s => {
     let items = list.filter(p => p.status === s.id);
@@ -1011,7 +1020,7 @@ function viewPrefs() {
         <input type="text" value="${esc(p.name)}" data-change="platName" data-id="${esc(p.id)}" aria-label="平台名稱">
         <button class="btn small danger" data-act="delPlat" data-id="${esc(p.id)}">刪除</button>
       </div>
-      <div class="col-pick"><span class="hint">看板欄位：</span><button class="btn small ghost" data-act="renameCols" data-id="${esc(p.id)}">✏️ 改欄位名稱</button>${STATUS.map(st => `<button class="chip small" data-act="togCol" data-id="${esc(p.id)}" data-val="${st.id}" aria-pressed="${platCols(p).includes(st.id)}">${esc(stName(st.id, p.id))}</button>`).join('')}</div>
+      <div class="col-pick"><span class="hint">看板欄位：</span><button class="btn small ghost" data-act="renameCols" data-id="${esc(p.id)}">✏️ 欄位名稱／順序</button>${platOrder(p).map(id => STATUS.find(x => x.id === id)).map(st => `<button class="chip small" data-act="togCol" data-id="${esc(p.id)}" data-val="${st.id}" aria-pressed="${platCols(p).includes(st.id)}">${esc(stName(st.id, p.id))}</button>`).join('')}</div>
       <div class="chips">${p.categories.map((c, i) => `<span class="cat-chip">${esc(c)}<button data-act="delCat" data-id="${esc(p.id)}" data-val="${i}" aria-label="刪除分類 ${esc(c)}">✕</button></span>`).join('')}
         <input type="text" class="cat-add" placeholder="＋ 分類" data-enter="addCat" data-id="${esc(p.id)}" aria-label="新增分類"></div>
     </div>`).join('');
@@ -1126,7 +1135,7 @@ function openProject(id, preset = {}) {
         <datalist id="ipList">${DB().settings.ips.map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist></label>
       ${p.ip && DB().settings.ips.includes(p.ip) ? `<div style="margin-top:-8px"><button class="btn small ghost" type="button" data-act="openIp" data-val="${esc(p.ip)}">📋 查看「${esc(p.ip)}」的製作需求</button></div>` : ''}
       <div class="f-row">
-        <label class="f"><span>狀態</span><select id="pStatus">${STATUS.map(s => `<option value="${s.id}" ${s.id === p.status ? 'selected' : ''}>${esc(stName(s.id, p.platform))}</option>`).join('')}</select></label>
+        <label class="f"><span>狀態</span><select id="pStatus">${platOrder(platform(p.platform)).map(id => STATUS.find(x => x.id === id)).map(s => `<option value="${s.id}" ${s.id === p.status ? 'selected' : ''}>${esc(stName(s.id, p.platform))}</option>`).join('')}</select></label>
         <div class="f"><span style="font-size:.82rem;font-weight:500;color:var(--muted)">優先度</span>
           <div class="seg" id="pPri">${PRIORITY.map(x => `<button type="button" data-val="${x.id}" aria-pressed="${p.priority === x.id}">${x.name}</button>`).join('')}</div></div>
       </div>
@@ -1319,15 +1328,35 @@ const ACTIONS = {
     DB().settings.ips.splice(Number(el.dataset.val), 1); Store.saveSettings();
   },
   renameCols: el => {
-    const pl = platform(el.dataset.id);
-    openModal(`<div class="modal-h"><h2>${esc(pl.name)}｜欄位名稱</h2><button class="icon-btn" data-act="closeModal" aria-label="關閉">✕</button></div>
-      <div class="modal-b"><p class="sub" style="margin:0">只會改「${esc(pl.name)}」的顯示名稱，留空就用預設名稱。</p>
-        ${STATUS.map(st => `<label class="f"><span>${statusPill(st.id)}</span><input type="text" data-col="${st.id}" value="${esc((pl.colNames || {})[st.id] || '')}" placeholder="${esc(st.name)}"></label>`).join('')}</div>
-      <div class="modal-f"><div class="r"><button class="btn" data-act="closeModal">取消</button><button class="btn primary" id="rcSave">儲存</button></div></div>`);
+    const pl = platform(el.dataset.id), vis = platCols(pl);
+    const row = id => { const st = STATUS.find(x => x.id === id); return `<div class="colrow" data-cid="${id}">
+        <div class="colrow-move"><button class="icon-btn" type="button" data-mv="-1" aria-label="往上移">▲</button><button class="icon-btn" type="button" data-mv="1" aria-label="往下移">▼</button></div>
+        <div class="colrow-main"><div class="colrow-h">${statusPill(id)}<label class="toggle small"><input type="checkbox" data-vis ${vis.includes(id) ? 'checked' : ''}> 顯示</label></div>
+          <input type="text" data-col="${id}" value="${esc((pl.colNames || {})[id] || '')}" placeholder="${esc(st.name)}" aria-label="${esc(st.name)} 的顯示名稱">
+          <span class="hint">${esc(statusRule(id))}</span></div></div>`; };
+    openModal(`<div class="modal-h"><h2>${esc(pl.name)}｜看板欄位</h2><button class="icon-btn" data-act="closeModal" aria-label="關閉">✕</button></div>
+      <div class="modal-b"><p class="sub" style="margin:0">用 ▲▼ 調整順序，看板會照這個順序由左到右排列。名稱留空就用預設名稱。只影響「${esc(pl.name)}」。</p>
+        <div id="colList" class="collist">${platOrder(pl).map(row).join('')}</div></div>
+      <div class="modal-f"><button class="btn" id="rcReset" type="button">恢復預設順序</button><div class="r"><button class="btn" data-act="closeModal">取消</button><button class="btn primary" id="rcSave">儲存</button></div></div>`);
+    const list = $('#colList');
+    list.addEventListener('click', e => {
+      const b = e.target.closest('[data-mv]'); if (!b) return;
+      const r = b.closest('.colrow'), dir = Number(b.dataset.mv);
+      if (dir < 0 && r.previousElementSibling) list.insertBefore(r, r.previousElementSibling);
+      if (dir > 0 && r.nextElementSibling) list.insertBefore(r.nextElementSibling, r);
+      b.focus();
+    });
+    $('#rcReset').onclick = () => { ALL_COLS().forEach(id => list.appendChild(list.querySelector(`[data-cid="${id}"]`))); };
     $('#rcSave').onclick = () => {
-      const names = {};
-      $$('[data-col]').forEach(i => { const v = i.value.trim(); if (v) names[i.dataset.col] = v; });
-      pl.colNames = names; closeModal(); Store.saveSettings(); toast(`已更新「${pl.name}」的欄位名稱`);
+      const names = {}, order = [], cols = [];
+      $$('.colrow', list).forEach(r => {
+        const id = r.dataset.cid; order.push(id);
+        if ($('[data-vis]', r).checked) cols.push(id);
+        const v = $('[data-col]', r).value.trim(); if (v) names[id] = v;
+      });
+      if (!cols.length) { toast('至少要顯示一個欄位'); return; }
+      pl.colNames = names; pl.order = order; pl.columns = cols;
+      closeModal(); Store.saveSettings(); toast(`已更新「${pl.name}」的看板欄位`);
     };
   },
   togCol: el => {
