@@ -585,7 +585,8 @@ function viewBoard() {
   const cols = shown.map(s => {
     let items = list.filter(p => p.status === s.id);
     if (s.id === 'done') items.sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
-    else items.sort((a, b) => priRank[a.priority] - priRank[b.priority] || ((projKey(a) || {}).date || '9999').localeCompare((projKey(b) || {}).date || '9999'));
+    else items.sort((a, b) => priRank[a.priority] - priRank[b.priority] || ((projKey(a) || {}).date || '9999').localeCompare((projKey(b) || {}).date || '9999')
+      || (a.batch || '').localeCompare(b.batch || '', 'zh-Hant', { numeric: true }) || (a.name || '').localeCompare(b.name || '', 'zh-Hant', { numeric: true }));
     return `<div class="col" data-status="${s.id}">
       <div class="col-h"><span>${statusPill(s.id, cur ? cur.id : null)}<span class="n">${items.length}</span></span>${s.id === firstCol ? `<button class="icon-btn" data-act="newProject" data-val="${s.id}" aria-label="新增專案" title="新增專案">＋</button>` : ''}</div>
       <div class="cards">${items.map(p => cardHTML(p, T)).join('')}</div></div>`;
